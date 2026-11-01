@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 1,
-    "identityHash": "33f971d7e379392a9b3ce60084898525",
+    "identityHash": "d01f48f43e8c894693c1186c01735196",
     "entities": [
       {
         "tableName": "users",
@@ -51,11 +51,71 @@
             "id"
           ]
         }
+      },
+      {
+        "tableName": "pending_sync",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`operation` TEXT NOT NULL, `queued_at_epoch_millis` INTEGER NOT NULL, `user_id` INTEGER NOT NULL, `user_name` TEXT NOT NULL, `user_email` TEXT NOT NULL, `user_gender` TEXT NOT NULL, `user_status` TEXT NOT NULL, `user_createdAtEpochMillis` INTEGER NOT NULL, PRIMARY KEY(`user_id`))",
+        "fields": [
+          {
+            "fieldPath": "operation",
+            "columnName": "operation",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "queuedAtEpochMillis",
+            "columnName": "queued_at_epoch_millis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "user.id",
+            "columnName": "user_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "user.name",
+            "columnName": "user_name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "user.email",
+            "columnName": "user_email",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "user.gender",
+            "columnName": "user_gender",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "user.status",
+            "columnName": "user_status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "user.createdAtEpochMillis",
+            "columnName": "user_createdAtEpochMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "user_id"
+          ]
+        }
       }
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '33f971d7e379392a9b3ce60084898525')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'd01f48f43e8c894693c1186c01735196')"
     ]
   }
 }

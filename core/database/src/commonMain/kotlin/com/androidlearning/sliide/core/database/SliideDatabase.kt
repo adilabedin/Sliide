@@ -5,10 +5,14 @@ import androidx.room.Database
 import androidx.room.RoomDatabase
 import androidx.room.RoomDatabaseConstructor
 
-@Database(entities = [UserEntity::class], version = 1)
+@Database(
+    entities = [UserEntity::class, PendingSyncEntity::class],
+    version = 1,
+)
 @ConstructedBy(SliideDatabaseConstructor::class)
 abstract class SliideDatabase : RoomDatabase() {
     abstract val userDao: UserDao
+    abstract val pendingSyncDao: PendingSyncDao
 
     companion object {
         const val FILE_NAME = "sliide.db"
