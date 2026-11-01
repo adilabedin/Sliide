@@ -16,6 +16,7 @@ kotlin {
         getByName("androidHostTest").dependencies {
             implementation(project.dependencies.platform(libs.koin.bom))
             implementation(libs.koin.test)
+            implementation(libs.androidx.work.runtime)
             implementation(libs.kotlinx.coroutines.test)
         }
     }

@@ -165,8 +165,37 @@ offline. Sync skips users that are still in their Undo window.
 - A write lock is held **per queue entry**, so a user write waits for at most one in-flight request.
 - Sync is **single-flight**: a second caller joins the running pass instead of resending entries.
 - Each entry is cleared in its own transaction, so a replay the OS interrupts resumes cleanly.
-- Planned follow-up: a background job (Android WorkManager / iOS `BGTaskScheduler`, about every 30 minutes) that
-  only calls `syncPending()`.
+
+### Background sync
+
+The planning artifacts are in [`openspec/changes/add-background-sync`](./openspec/changes/add-background-sync).
+
+The queue is also replayed while the app isn't in the foreground, so a change saved offline reaches GoRest even if the
+user never reopens the app. A background run calls **only `syncPending()`**, never `refresh()`, so a row never
+disappears from a list the user is looking at. It shares the repository's single-flight pass, so a background run and
+a pull-to-refresh never send the same entry twice.
+
+| | Android | iOS |
+|---|---|---|
+| Mechanism | WorkManager unique periodic work `sync_pending_users`, every 30 min | `BGAppRefreshTask` `com.androidlearning.sliide.sync-pending-users`, not before 30 min |
+| Offline | `NetworkType.CONNECTED`: the OS doesn't start the job | an `NWPathMonitor` check at the start of the run; offline → completes without syncing |
+| Scheduling | on every launch with `KEEP`, so the period never restarts and a running sync is never cancelled | registered at launch; a request is submitted only if none is pending, and each run submits the next one first |
+| Time limit | none in practice | about 30 s; on expiry the run is cancelled and the remaining entries wait for the next run |
+
+- **No retry.** Every run reports success to the OS (on iOS, expiry reports failure, as Apple requires), so there is
+  no backoff. Whatever is still queued waits for the next periodic run or the next foreground refresh.
+- **Shared logic.** `BackgroundUserSync` (`commonMain`) is the run itself. The Android `UserSyncWorker` and the iOS
+  `IosBackgroundSyncRunner` only adapt the OS callback to it. `UserSyncScheduler` is a domain interface, and
+  `platformUserSyncModule` is the only `expect`/`actual`, because WorkManager and `BGTaskScheduler` are unrelated OS
+  facilities.
+- **Wiring.** `initKoin()` calls `schedulePeriodicSync()` on both platforms. On Android, the manifest removes the
+  default WorkManager initializer and `SliideApplication` installs Koin's `workManagerFactory()`, so the worker gets
+  its dependencies injected. On iOS, `Info.plist` lists the task id and the `fetch` background mode, and registration
+  happens inside `iOSApp.init()`, before launch finishes.
+- **Limits.** The OS decides when a run actually starts. On iOS that can be much later than 30 minutes, or not at all
+  under Low Power Mode or with Background App Refresh off. Force-quitting the app stops background work on both
+  platforms. `BGTaskScheduler` is not available on the iOS Simulator: the app logs "Background sync not scheduled" and
+  carries on.
 
 ### Application scope: operations outlive the screen
 
@@ -380,6 +409,23 @@ During implementation it drove the emulators over `adb` to check:
 That pass found a real bug: closing the profile pane didn't reset its ViewModel, so the Create form reopened with the
 old draft. The fix (`ProfileAction.OnDismiss`) came with regression tests. It also caught two visual issues, an
 untinted gap between the panes and a selection tint that matched one of the avatar tones, and verified their fixes.
+
+### Example: background sync
+
+The background sync ([`openspec/changes/add-background-sync`](./openspec/changes/add-background-sync)) started as a
+request to "implement the online create, update and delete, queue them on error, and add WorkManager and the iOS
+background task". Before planning, Claude read the code and reported that the online writes, their queueing and their
+UI wiring already existed, so the change covers only the background job. It asked one question, whether *every* error
+should be queued, because a 422 or 401 would fail on every replay. The answer, "no retry, and don't bother when
+offline", became two design decisions: queue retryable failures only, and run the job only when there is a network,
+without ever retrying.
+
+It also departed from the `android-background` skill's sample where the project needed something else: `KEEP`
+instead of `REPLACE`, because scheduling happens on every launch, and an `NWPathMonitor` check on iOS, because an
+app-refresh request can't require a network. During implementation, a failing test showed that `advanceUntilIdle()`
+doesn't drain `backgroundScope` work, so the iOS runner tests step with `runCurrent()`. Checking on the emulator
+showed that `adb shell cmd jobscheduler run -f` can't start periodic work early, because WorkManager skips a run that
+arrives before its period. The end-to-end check therefore waits for the real 30-minute period.
 
 ---
 

@@ -6,6 +6,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import org.koin.android.ext.koin.androidContext
+import org.koin.androidx.workmanager.koin.workManagerFactory
 
 class SliideApplication : Application() {
     /**
@@ -18,6 +19,8 @@ class SliideApplication : Application() {
         super.onCreate()
         initKoin(applicationScope) {
             androidContext(this@SliideApplication)
+            // Initialises WorkManager with Koin's WorkerFactory before initKoin schedules the background sync.
+            workManagerFactory()
         }
     }
 }

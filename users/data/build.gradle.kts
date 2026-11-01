@@ -11,8 +11,15 @@ kotlin {
             implementation(project.dependencies.platform(libs.koin.bom))
             implementation(libs.koin.core)
         }
+        androidMain.dependencies {
+            implementation(libs.androidx.work.runtime)
+            implementation(libs.koin.androidx.workmanager)
+        }
         commonTest.dependencies {
             implementation(libs.ktor.client.mock)
+        }
+        getByName("androidDeviceTest").dependencies {
+            implementation(libs.androidx.work.testing)
         }
     }
 }
