@@ -1,31 +1,50 @@
-This is a Kotlin Multiplatform project targeting Android, iOS.
+# Sliide — User Management (KMP)
 
-* [/iosApp](./iosApp/iosApp) contains an iOS application. Even if you’re sharing your UI with Compose Multiplatform,
-  you need this entry point for your iOS app. This is also where you should add SwiftUI code for your project.
+Kotlin Multiplatform app for Android and iOS with 100% shared Compose Multiplatform UI, built on the
+[GoRest](https://gorest.co.in) users API.
 
-* [/shared](./shared/src) is for code that will be shared across your Compose Multiplatform applications.
-  It contains several subfolders:
-  - [commonMain](./shared/src/commonMain/kotlin) is for code that’s common for all targets.
-  - Other folders are for Kotlin code that will be compiled for only the platform indicated in the folder name.
-    For example, if you want to use Apple’s CoreCrypto for the iOS part of your Kotlin app,
-    the [iosMain](./shared/src/iosMain/kotlin) folder would be the right place for such calls.
-    Similarly, if you want to edit the Desktop (JVM) specific part, the [jvmMain](./shared/src/jvmMain/kotlin)
-    folder is the appropriate location.
+## Architecture
 
-### Running the apps
+Clean Architecture (domain / data / presentation) with MVI, Koin for DI and Room KMP as the local cache.
 
-Use the run configurations provided by the run widget in your IDE's toolbar. You can also use these commands and options:
+| Module | Holds | Depends on |
+|---|---|---|
+| `:users:domain` | `User` model, `UserRepository` interface, `Result` / `DataError` | nothing |
+| `:users:data` | `RoomUserRepository`, entity↔domain mappers, Koin module | users domain, `:core:database` |
+| `:users:presentation` | `UsersViewModel` (MVI), `UsersRoot` / `UsersScreen`, strings, Koin module | users domain, `:core:designsystem` |
+| `:core:database` | Room KMP `SliideDatabase`, `UserEntity`, `UserDao`, per-platform builder | — |
+| `:core:designsystem` | `SliideTheme`: light/dark Material 3 colour schemes and typography | — |
+| `:composeApp` | Shared app shell `App()`, Koin assembly `initKoin()`, iOS framework `ComposeApp` | everything above |
+| `:androidApp` | `SliideApplication` (starts Koin), `MainActivity` | `:composeApp` |
+| `iosApp` | SwiftUI shell; starts Koin in `iOSApp.init()` and hosts `MainViewController()` | `ComposeApp` framework |
 
-- Android app: `./gradlew :androidApp:assembleDebug`
-- iOS app: open the [/iosApp](./iosApp) directory in Xcode and run it from there.
+Why this shape:
+- **Feature-first.** With one feature, shared code stays in `:users:*` until a second feature needs it. Only the
+  database (so another feature can share the cache) and the theme (used by the app shell and every feature) live in `core`.
+- **Presentation never sees data.** `:users:presentation` only knows the domain interface; Koin binds
+  `RoomUserRepository` to it in `:composeApp`.
+- **One `expect`/`actual`:** the Room database builder, because Android needs a `Context` and iOS needs the documents
+  directory. Everything else is in `commonMain`.
+- **Convention plugins** in [`build-logic`](./build-logic) (`kmp.library`, `cmp.library`, `cmp.feature`,
+  `cmp.application`, `android.application.compose`, `room`) hold targets, SDKs, JVM 17, test source sets, Compose,
+  Koin and Room/KSP. Module build files are a plugin alias plus project dependencies. All versions are in
+  [`gradle/libs.versions.toml`](./gradle/libs.versions.toml).
 
-### Running tests
+## Running the apps
 
-Use the run button in your IDE's editor gutter, or run tests using Gradle tasks:
+- Android: `./gradlew :androidApp:installDebug`, or the run widget in the IDE.
+- iOS: open [`iosApp`](./iosApp) in Xcode and run. The build phase calls `:composeApp:embedAndSignAppleFrameworkForXcode`.
 
-- Android tests: `./gradlew :shared:testAndroidHostTest`
-- iOS tests: `./gradlew :shared:iosSimulatorArm64Test`
-- Lint: `./gradlew ktlintCheck` (auto-fix most issues with `./gradlew ktlintFormat`)
+## Running tests and checks
+
+- Unit tests (shared `commonTest`, on the JVM): `./gradlew testAndroidHostTest`
+- Unit tests on iOS: `./gradlew iosSimulatorArm64Test`
+- Instrumented tests (emulator running): `./gradlew :core:database:connectedAndroidDeviceTest :androidApp:connectedDebugAndroidTest`
+- Everything: `./gradlew build` and `./gradlew :composeApp:linkDebugFrameworkIosSimulatorArm64`
+- Lint: `./gradlew ktlintCheck` (`./gradlew ktlintFormat` fixes most issues)
+
+Tests use kotlin-test, AssertK, Turbine and coroutines-test with fakes rather than mocks. The Koin graph is checked
+with `koin-test`'s `verify()` (`KoinGraphTest`), and an instrumented smoke test launches the real app.
 
 ---
 
@@ -50,8 +69,7 @@ Instructions can be ignored, but hooks can't. [`.claude/settings.json`](./.claud
 
 1. **Lint after every turn** ([`stop-lint.sh`](./.claude/hooks/stop-lint.sh), `Stop` hook). When the agent finishes a
    turn that changed Kotlin files, `./gradlew ktlintCheck` runs. New violations are fed back to the agent, and it has
-   to fix them before it can stop. Existing template violations are recorded in each module's `ktlint-baseline.xml`, so
-   only new code is held to the rule. After one failed fix attempt the hook warns instead of blocking again, so it
+   to fix them before it can stop. Generated sources under `build/` are excluded and there are no baselines, so every module is held to the rule. After one failed fix attempt the hook warns instead of blocking again, so it
    can't trap the agent in a loop.
 2. **Tests before every push** ([`pre-push-tests.sh`](./.claude/hooks/pre-push-tests.sh), `PreToolUse` hook on
    `Bash`). Any command containing `git push` first runs `./gradlew testAndroidHostTest`. If a test fails, the push is
@@ -63,6 +81,16 @@ stopped the turn until it was fixed.
 
 On top of the hooks, the Definition of Done in `CLAUDE.md` requires `./gradlew build` and the iOS framework link
 task to pass before any task counts as complete.
+
+### Example: the module setup
+
+The multi-module structure was the first OpenSpec change ([`openspec/changes/setup-module-structure`](./openspec/changes/setup-module-structure)).
+The agent asked the clarifying questions first: one `core` module or several, whether to rename `:shared`, and
+whether Room lives in data or in core. The answers went into the proposal, specs and design. Then it implemented the
+27 tasks group by group, with each group carrying its own tests. Version lookups came straight from Maven Central and
+Google Maven. Build failures went back into the loop and were fixed there: a missing JDK 17 toolchain, a JetBrains
+test artifact that doesn't exist, and an Espresso incompatibility with API 37. The final check was the app running on
+an Android emulator and an iOS simulator in light and dark mode.
 
 ---
 

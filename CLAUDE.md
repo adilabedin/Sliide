@@ -32,18 +32,29 @@ Use `expect`/`actual` only for genuine platform differences.
 
 ## Multi-module architecture (required)
 
-Do **not** keep all code in a single `:shared` blob long term. Evolve toward **convention plugins** in `build-logic` plus **core** and **feature** modules. When creating or reshaping modules, read the **`kmp-module-structure`** skill and follow it.
+Shared Gradle setup lives in **convention plugins** in `build-logic` (`kmp.library`, `cmp.library`, `cmp.feature`,
+`cmp.application`, `android.application.compose`, `room`); module build files only pick a plugin and list project deps.
+When creating or reshaping modules, read the **`kmp-module-structure`** skill and follow it.
 
-**Target shape (starting point; refine per skill)**
+**Current shape**
 
-- `:core:domain`, `:core:data`, `:core:database`, `:core:designsystem`, `:core:presentation`
-- `:feature:users` (split into domain / data / presentation if the structure skill requires)
-- Thin app entry: `:composeApp` / `:androidApp` and `iosApp`
+| Module | Holds |
+|---|---|
+| `:users:domain` | `User` model, `UserRepository` interface, `Result` / `DataError`. No project deps. |
+| `:users:data` | Repository implementation, entity↔domain mappers, Koin module. Depends on users domain + `:core:database`. |
+| `:users:presentation` | MVI ViewModel, Root/Screen composables, strings, Koin module. Depends on users domain + `:core:designsystem`. |
+| `:core:database` | Room KMP database, entities, DAOs, per-platform builder. |
+| `:core:designsystem` | `SliideTheme` (light/dark colour schemes, typography). |
+| `:composeApp` | Shared app shell, Koin assembly (`initKoin`), iOS framework `ComposeApp`. |
+| `:androidApp` / `iosApp` | Thin platform entry points; start Koin, host `App()`. |
+
+Features are top-level and named after the feature: `:<name>:{domain,data,presentation}`. Code stays in the feature
+until a second feature needs it; only then does it move to a `:core:*` module.
 
 **Dependency rules**
 
-- Features do **not** depend on other features.
-- Presentation depends on **domain** only (not on data implementations).
+- Features do **not** depend on other features; core modules never depend on features.
+- Presentation depends on **domain** only (not on data implementations or the database).
 - Data implements interfaces defined in **domain**.
 
 ---
@@ -55,18 +66,18 @@ A task or feature is **done** only when **Gradle succeeds**. If the build fails,
 **Verification gate**
 
 1. `./gradlew build` — all modules compile; shared unit tests run.
-2. `./gradlew :composeApp:linkDebugFrameworkIosSimulatorArm64` (or the equivalent iOS framework link task for this project) — iOS target compiles.
+2. `./gradlew :composeApp:linkDebugFrameworkIosSimulatorArm64` — iOS target compiles.
 
-Until both pass (or the iOS task name is updated to match the actual module name), the work is not complete.
+Until both pass, the work is not complete.
 
 **Automated gates (hooks in `.claude/settings.json`)**
 
 - **Stop → `.claude/hooks/stop-lint.sh`:** when a turn ends with Kotlin changes, `./gradlew ktlintCheck` runs and any new
-  violations are sent back to you. Fix them (`./gradlew ktlintFormat` handles most) — do not add them to the baseline.
+  violations are sent back to you. Fix them (`./gradlew ktlintFormat` handles most) — never add a baseline to hide them.
 - **PreToolUse(Bash) → `.claude/hooks/pre-push-tests.sh`:** any `git push` first runs `./gradlew testAndroidHostTest`;
   a failure blocks the push. Fix the tests — never skip or weaken them to get through.
-- Pre-existing violations live in each module's `ktlint-baseline.xml`. The baseline is position-based, so editing a
-  file can resurface its old violations; fix them in that file as part of the change.
+- There are no ktlint baselines: every module is clean. Generated sources under `build/` are not linted, and
+  `.editorconfig` allows PascalCase `@Composable` function names.
 
 ---
 
