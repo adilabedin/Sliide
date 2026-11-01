@@ -7,7 +7,7 @@ import androidx.room.PrimaryKey
  * A cached GoRest user. [gender] and [status] are stored as their wire strings; [createdAtEpochMillis]
  * is set locally because GoRest returns no timestamp.
  */
-@Entity(tableName = "users")
+@Entity(tableName = DatabaseConstants.Users.TABLE)
 data class UserEntity(
     @PrimaryKey val id: Long,
     val name: String,

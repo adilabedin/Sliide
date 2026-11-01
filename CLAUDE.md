@@ -33,16 +33,18 @@ Use `expect`/`actual` only for genuine platform differences.
 ## Multi-module architecture (required)
 
 Shared Gradle setup lives in **convention plugins** in `build-logic` (`kmp.library`, `cmp.library`, `cmp.feature`,
-`cmp.application`, `android.application.compose`, `room`); module build files only pick a plugin and list project deps.
+`cmp.application`, `android.application.compose`, `room`, `buildkonfig`); module build files only pick a plugin and list project deps.
 When creating or reshaping modules, read the **`kmp-module-structure`** skill and follow it.
 
 **Current shape**
 
 | Module | Holds |
 |---|---|
-| `:users:domain` | `User` model, `UserRepository` interface, `Result` / `DataError`. No project deps. |
-| `:users:data` | Repository implementation, entity↔domain mappers, Koin module. Depends on users domain + `:core:database`. |
+| `:users:domain` | `User` model, `UserRepository` interface. Depends on `:core:domain` (as `api`). |
+| `:users:data` | Repository implementation, `KtorUserApiClient`, DTOs and mappers, Koin module. Depends on users domain + `:core:database` + `:core:data`. |
 | `:users:presentation` | MVI ViewModel, Root/Screen composables, strings, Koin module. Depends on users domain + `:core:designsystem`. |
+| `:core:domain` | `Result` / `EmptyResult` / `DataError` and their helpers. No project deps; every module may depend on it. |
+| `:core:data` | Ktor `HttpClient` factory, `HttpClient` `get`/`post`/`patch`/`delete` extensions mapping to `DataError.Remote`, per-platform engine, BuildKonfig GoRest credentials (token from git-ignored `local.properties`), `ApplicationScope` Koin qualifier, `INTERNET` permission. Depends on `:core:domain`. |
 | `:core:database` | Room KMP database, entities, DAOs, per-platform builder. |
 | `:core:designsystem` | `SliideTheme` (light/dark colour schemes, typography). |
 | `:composeApp` | Shared app shell, Koin assembly (`initKoin`), iOS framework `ComposeApp`. |

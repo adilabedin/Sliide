@@ -1,13 +1,13 @@
 package com.androidlearning.sliide.users.presentation.users
 
+import com.androidlearning.sliide.core.domain.util.DataError
+import com.androidlearning.sliide.core.domain.util.EmptyResult
+import com.androidlearning.sliide.core.domain.util.Result
 import com.androidlearning.sliide.users.domain.UserRepository
 import com.androidlearning.sliide.users.domain.model.SyncReport
 import com.androidlearning.sliide.users.domain.model.User
 import com.androidlearning.sliide.users.domain.model.UserDetails
 import com.androidlearning.sliide.users.domain.model.WriteStatus
-import com.androidlearning.sliide.users.domain.util.DataError
-import com.androidlearning.sliide.users.domain.util.EmptyResult
-import com.androidlearning.sliide.users.domain.util.Result
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 

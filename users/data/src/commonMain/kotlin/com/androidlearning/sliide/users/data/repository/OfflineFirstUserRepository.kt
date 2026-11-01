@@ -6,25 +6,24 @@ import com.androidlearning.sliide.core.database.PendingSyncDao
 import com.androidlearning.sliide.core.database.PendingSyncEntity
 import com.androidlearning.sliide.core.database.UserDao
 import com.androidlearning.sliide.core.database.UserEntity
+import com.androidlearning.sliide.core.domain.util.DataError
+import com.androidlearning.sliide.core.domain.util.EmptyResult
+import com.androidlearning.sliide.core.domain.util.Result
+import com.androidlearning.sliide.core.domain.util.isRetryable
 import com.androidlearning.sliide.users.data.mapper.toPendingSync
 import com.androidlearning.sliide.users.data.mapper.toUser
 import com.androidlearning.sliide.users.data.mapper.toUserDetails
 import com.androidlearning.sliide.users.data.mapper.toUserEntity
 import com.androidlearning.sliide.users.data.sync.PendingSyncMerger
-import com.androidlearning.sliide.users.domain.UserRemoteDataSource
+import com.androidlearning.sliide.users.domain.UserApiClient
 import com.androidlearning.sliide.users.domain.UserRepository
 import com.androidlearning.sliide.users.domain.model.RemoteUser
 import com.androidlearning.sliide.users.domain.model.SyncReport
 import com.androidlearning.sliide.users.domain.model.User
 import com.androidlearning.sliide.users.domain.model.UserDetails
 import com.androidlearning.sliide.users.domain.model.WriteStatus
-import com.androidlearning.sliide.users.domain.util.DataError
-import com.androidlearning.sliide.users.domain.util.EmptyResult
-import com.androidlearning.sliide.users.domain.util.Result
-import com.androidlearning.sliide.users.domain.util.isRetryable
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -39,17 +38,21 @@ import kotlin.time.Clock
  * Concurrency (design D5/D7):
  * - [writeMutex] is held for each user write (local step plus one HTTP call) and for each replayed entry, never for
  *   the whole queue, so a user write waits for at most one in-flight replay request.
- * - [syncPending] is single-flight: the running pass is a [Deferred] started in [syncScope], and concurrent callers
- *   await that same pass. Because it lives in [syncScope] rather than in the caller's scope, cancelling one caller
- *   (for example a background task the OS stops) never cancels the pass for the others. Tests inject `backgroundScope`.
+ * - [syncPending] is single-flight: the running pass is a [Deferred] started in [applicationScope], and concurrent
+ *   callers await that same pass, so cancelling one caller never cancels the pass for the others.
+ *
+ * Lifetime (spec: operation-lifetime): every suspending operation runs in [applicationScope], the process-wide scope
+ * the application creates, and the caller only awaits it. A ViewModel cleared mid-request therefore never leaves the
+ * cache, the outbox and the server half-updated. [observeUsers] stays a cold flow bound to its collector. Tests inject
+ * `backgroundScope`, or a child scope they cancel to simulate a process kill.
  */
 class OfflineFirstUserRepository(
     private val userDao: UserDao,
     private val pendingSyncDao: PendingSyncDao,
     private val transactionRunner: DatabaseTransactionRunner,
-    private val remote: UserRemoteDataSource,
+    private val apiClient: UserApiClient,
     private val clock: Clock,
-    private val syncScope: CoroutineScope = CoroutineScope(SupervisorJob()),
+    private val applicationScope: CoroutineScope,
 ) : UserRepository {
     private val writeMutex = Mutex()
     private val syncStateMutex = Mutex()
@@ -73,81 +76,85 @@ class OfflineFirstUserRepository(
     override fun observeUsers(): Flow<List<User>> = userDao.observeAll().map { entities -> entities.map { it.toUser() } }
 
     override suspend fun createUser(details: UserDetails): Result<WriteStatus, DataError> =
-        writeMutex.withLock {
-            val now = nowMillis()
-            // The temp row and its pending CREATE are written together, so a crash mid-call never loses the create.
-            val tempEntity =
-                transactionRunner.inTransaction {
-                    val tempId = minOf(userDao.nextTempId(), lastIssuedTempId - 1)
-                    lastIssuedTempId = tempId
-                    val entity = details.toUserEntity(id = tempId, createdAtEpochMillis = now)
-                    userDao.upsert(entity)
-                    pendingSyncDao.upsert(entity.toPendingSync(PendingOperation.CREATE, queuedAtEpochMillis = now))
-                    entity
-                }
-            when (val result = remote.create(details)) {
-                is Result.Success -> {
-                    rekey(tempEntity, result.data)
-                    Result.Success(WriteStatus.SYNCED)
-                }
-                is Result.Failure -> {
-                    if (result.error.isRetryable) {
-                        Result.Success(WriteStatus.QUEUED)
-                    } else {
-                        transactionRunner.inTransaction {
-                            userDao.deleteById(tempEntity.id)
-                            pendingSyncDao.deleteByUserId(tempEntity.id)
+        outlivingCaller {
+            writeMutex.withLock {
+                val now = nowMillis()
+                // The temp row and its pending CREATE are written together, so a crash mid-call never loses the create.
+                val tempEntity =
+                    transactionRunner.inTransaction {
+                        val tempId = minOf(userDao.nextTempId(), lastIssuedTempId - 1)
+                        lastIssuedTempId = tempId
+                        val entity = details.toUserEntity(id = tempId, createdAtEpochMillis = now)
+                        userDao.upsert(entity)
+                        pendingSyncDao.upsert(entity.toPendingSync(PendingOperation.CREATE, queuedAtEpochMillis = now))
+                        entity
+                    }
+                when (val result = apiClient.create(details)) {
+                    is Result.Success -> {
+                        rekey(tempEntity, result.data)
+                        Result.Success(WriteStatus.SYNCED)
+                    }
+                    is Result.Failure -> {
+                        if (result.error.isRetryable) {
+                            Result.Success(WriteStatus.QUEUED)
+                        } else {
+                            transactionRunner.inTransaction {
+                                userDao.deleteById(tempEntity.id)
+                                pendingSyncDao.deleteByUserId(tempEntity.id)
+                            }
+                            Result.Failure(result.error)
                         }
-                        Result.Failure(result.error)
                     }
                 }
             }
         }
 
     override suspend fun updateUser(user: User): Result<WriteStatus, DataError> =
-        writeMutex.withLock {
-            val previous = userDao.getById(user.id) ?: return@withLock Result.Failure(DataError.Local.NOT_FOUND)
-            // The row keeps its original createdAt so the feed order and relative time don't jump on edit.
-            val updated = user.toUserEntity().copy(createdAtEpochMillis = previous.createdAtEpochMillis)
+        outlivingCaller {
+            writeMutex.withLock {
+                val previous = userDao.getById(user.id) ?: return@withLock Result.Failure(DataError.Local.NOT_FOUND)
+                // The row keeps its original createdAt so the feed order and relative time don't jump on edit.
+                val updated = user.toUserEntity().copy(createdAtEpochMillis = previous.createdAtEpochMillis)
 
-            if (user.id < 0) {
-                // Never-synced user: no API call, the change folds into its pending CREATE (spec: offline-sync).
-                transactionRunner.inTransaction {
-                    userDao.upsert(updated)
-                    enqueue(updated, PendingOperation.UPDATE)
-                }
-                return@withLock Result.Success(WriteStatus.QUEUED)
-            }
-
-            // Outbox first: the local edit and its merged pending UPDATE commit together before the request, so a
-            // cancelled caller or a process death mid-request leaves the edit queued instead of silently unprotected.
-            val previousPending = applyLocallyAndEnqueue(updated, PendingOperation.UPDATE) { userDao.upsert(updated) }
-            when (val result = remote.update(user.id, updated.toUserDetails())) {
-                is Result.Success -> {
+                if (user.id < 0) {
+                    // Never-synced user: no API call, the change folds into its pending CREATE (spec: offline-sync).
                     transactionRunner.inTransaction {
-                        userDao.upsert(result.data.toUserEntity(previous.createdAtEpochMillis))
-                        // A successful direct write supersedes anything older still queued for this user.
-                        pendingSyncDao.deleteByUserId(user.id)
+                        userDao.upsert(updated)
+                        enqueue(updated, PendingOperation.UPDATE)
                     }
-                    Result.Success(WriteStatus.SYNCED)
+                    return@withLock Result.Success(WriteStatus.QUEUED)
                 }
-                is Result.Failure -> {
-                    when {
-                        result.error.isRetryable -> Result.Success(WriteStatus.QUEUED)
-                        // The user no longer exists on the server: drop it locally together with any pending entry.
-                        result.error == DataError.Remote.NOT_FOUND -> {
-                            transactionRunner.inTransaction {
-                                userDao.deleteById(user.id)
-                                pendingSyncDao.deleteByUserId(user.id)
-                            }
-                            Result.Failure(result.error)
+
+                // Outbox first: the local edit and its merged pending UPDATE commit together before the request, so a
+                // cancelled caller or a process death mid-request leaves the edit queued instead of silently unprotected.
+                val previousPending = applyLocallyAndEnqueue(updated, PendingOperation.UPDATE) { userDao.upsert(updated) }
+                when (val result = apiClient.update(user.id, updated.toUserDetails())) {
+                    is Result.Success -> {
+                        transactionRunner.inTransaction {
+                            userDao.upsert(result.data.toUserEntity(previous.createdAtEpochMillis))
+                            // A successful direct write supersedes anything older still queued for this user.
+                            pendingSyncDao.deleteByUserId(user.id)
                         }
-                        else -> {
-                            transactionRunner.inTransaction {
-                                userDao.upsert(previous)
-                                restorePending(user.id, previousPending)
+                        Result.Success(WriteStatus.SYNCED)
+                    }
+                    is Result.Failure -> {
+                        when {
+                            result.error.isRetryable -> Result.Success(WriteStatus.QUEUED)
+                            // The user no longer exists on the server: drop it locally together with any pending entry.
+                            result.error == DataError.Remote.NOT_FOUND -> {
+                                transactionRunner.inTransaction {
+                                    userDao.deleteById(user.id)
+                                    pendingSyncDao.deleteByUserId(user.id)
+                                }
+                                Result.Failure(result.error)
                             }
-                            Result.Failure(result.error)
+                            else -> {
+                                transactionRunner.inTransaction {
+                                    userDao.upsert(previous)
+                                    restorePending(user.id, previousPending)
+                                }
+                                Result.Failure(result.error)
+                            }
                         }
                     }
                 }
@@ -155,62 +162,72 @@ class OfflineFirstUserRepository(
         }
 
     override suspend fun removeUserLocally(id: Long): Result<User, DataError.Local> =
-        writeMutex.withLock {
-            val entity = userDao.getById(id) ?: return@withLock Result.Failure(DataError.Local.NOT_FOUND)
-            userDao.deleteById(id)
-            awaitingFinalize += id
-            Result.Success(entity.toUser())
+        outlivingCaller {
+            writeMutex.withLock {
+                val entity = userDao.getById(id) ?: return@withLock Result.Failure(DataError.Local.NOT_FOUND)
+                userDao.deleteById(id)
+                awaitingFinalize += id
+                Result.Success(entity.toUser())
+            }
         }
 
     override suspend fun restoreUser(user: User) {
-        writeMutex.withLock {
-            userDao.upsert(user.toUserEntity())
-            awaitingFinalize -= user.id
+        outlivingCaller {
+            writeMutex.withLock {
+                userDao.upsert(user.toUserEntity())
+                awaitingFinalize -= user.id
+            }
         }
     }
 
     override suspend fun finalizeDelete(user: User): Result<WriteStatus, DataError> =
-        writeMutex.withLock {
-            val snapshot = user.toUserEntity()
+        outlivingCaller {
+            writeMutex.withLock {
+                val snapshot = user.toUserEntity()
 
-            if (user.id < 0) {
-                // Never-synced user: cancel its pending CREATE; the server never hears about it.
-                transactionRunner.inTransaction {
-                    userDao.deleteById(user.id)
-                    pendingSyncDao.deleteByUserId(user.id)
-                }
-                awaitingFinalize -= user.id
-                return@withLock Result.Success(WriteStatus.SYNCED)
-            }
-
-            // Outbox first: the pending DELETE commits before the request and before the Undo-window guard is lifted
-            // (both under writeMutex, so replay can't run in between), so the delete is always protected by one of them.
-            val previousPending = applyLocallyAndEnqueue(snapshot, PendingOperation.DELETE) { userDao.deleteById(user.id) }
-            awaitingFinalize -= user.id
-
-            val result = remote.delete(user.id)
-            when {
-                result is Result.Success || (result is Result.Failure && result.error == DataError.Remote.NOT_FOUND) -> {
-                    // Already gone on the server counts as success; the queued DELETE (and anything older) is done.
-                    pendingSyncDao.deleteByUserId(user.id)
-                    Result.Success(WriteStatus.SYNCED)
-                }
-                result is Result.Failure && result.error.isRetryable -> Result.Success(WriteStatus.QUEUED)
-                else -> {
+                if (user.id < 0) {
+                    // Never-synced user: cancel its pending CREATE; the server never hears about it.
                     transactionRunner.inTransaction {
-                        userDao.upsert(snapshot)
-                        restorePending(user.id, previousPending)
+                        userDao.deleteById(user.id)
+                        pendingSyncDao.deleteByUserId(user.id)
                     }
-                    Result.Failure((result as Result.Failure).error)
+                    awaitingFinalize -= user.id
+                    return@withLock Result.Success(WriteStatus.SYNCED)
+                }
+
+                // Outbox first: the pending DELETE commits before the request and before the Undo-window guard is lifted
+                // (both under writeMutex, so replay can't run in between), so the delete is always protected by one of them.
+                val previousPending = applyLocallyAndEnqueue(snapshot, PendingOperation.DELETE) { userDao.deleteById(user.id) }
+                awaitingFinalize -= user.id
+
+                val result = apiClient.delete(user.id)
+                when {
+                    result is Result.Success || (result is Result.Failure && result.error == DataError.Remote.NOT_FOUND) -> {
+                        // Already gone on the server counts as success; the queued DELETE (and anything older) is done.
+                        pendingSyncDao.deleteByUserId(user.id)
+                        Result.Success(WriteStatus.SYNCED)
+                    }
+                    result is Result.Failure && result.error.isRetryable -> Result.Success(WriteStatus.QUEUED)
+                    else -> {
+                        transactionRunner.inTransaction {
+                            userDao.upsert(snapshot)
+                            restorePending(user.id, previousPending)
+                        }
+                        Result.Failure((result as Result.Failure).error)
+                    }
                 }
             }
         }
 
+    /**
+     * Already outlives its caller: the pass is started in [applicationScope] and callers only await it, so a cancelled
+     * caller stops waiting while the pass (shared by every concurrent caller) runs on.
+     */
     override suspend fun syncPending(): Result<SyncReport, DataError.Remote> {
         val pass =
             syncStateMutex.withLock {
                 inFlightSync?.takeIf { it.isActive }
-                    ?: syncScope.async { replayQueue() }.also { inFlightSync = it }
+                    ?: applicationScope.async { replayQueue() }.also { inFlightSync = it }
             }
         return pass.await()
     }
@@ -220,22 +237,30 @@ class OfflineFirstUserRepository(
      * left to sync: no queued entries (skipped Undo-window entries count) and no user inside its Undo window. In that
      * case refresh returns success without fetching, because the cache is still the correct local truth.
      */
-    override suspend fun refresh(): EmptyResult<DataError> {
-        val sync = syncPending()
-        if (sync is Result.Failure) return Result.Failure(sync.error)
+    override suspend fun refresh(): EmptyResult<DataError> =
+        outlivingCaller {
+            val sync = syncPending()
+            if (sync is Result.Failure) return@outlivingCaller Result.Failure(sync.error)
 
-        return writeMutex.withLock {
-            if (pendingSyncDao.count() > 0 || awaitingFinalize.isNotEmpty()) return@withLock Result.Success(Unit)
+            writeMutex.withLock {
+                if (pendingSyncDao.count() > 0 || awaitingFinalize.isNotEmpty()) return@withLock Result.Success(Unit)
 
-            when (val page = remote.fetchLastPage()) {
-                is Result.Failure -> Result.Failure(page.error)
-                is Result.Success -> {
-                    replaceCacheIfChanged(page.data)
-                    Result.Success(Unit)
+                when (val page = apiClient.fetchLastPage()) {
+                    is Result.Failure -> Result.Failure(page.error)
+                    is Result.Success -> {
+                        replaceCacheIfChanged(page.data)
+                        Result.Success(Unit)
+                    }
                 }
             }
         }
-    }
+
+    /**
+     * Runs [block] in [applicationScope] and awaits it (spec: operation-lifetime). Cancelling the caller cancels only
+     * this await: the operation still completes its local writes, its request and any rollback or queueing. The scope's
+     * `SupervisorJob` delivers a failure to the awaiting caller without cancelling sibling operations.
+     */
+    private suspend fun <T> outlivingCaller(block: suspend () -> T): T = applicationScope.async { block() }.await()
 
     private suspend fun replayQueue(): Result<SyncReport, DataError.Remote> {
         var synced = 0
@@ -262,10 +287,10 @@ class OfflineFirstUserRepository(
         val userId = entry.user.id
         val result: Result<RemoteUser?, DataError.Remote> =
             when (entry.operation) {
-                PendingOperation.CREATE -> remote.create(entry.user.toUserDetails())
-                PendingOperation.UPDATE -> remote.update(userId, entry.user.toUserDetails())
+                PendingOperation.CREATE -> apiClient.create(entry.user.toUserDetails())
+                PendingOperation.UPDATE -> apiClient.update(userId, entry.user.toUserDetails())
                 PendingOperation.DELETE ->
-                    when (val deleted = remote.delete(userId)) {
+                    when (val deleted = apiClient.delete(userId)) {
                         is Result.Success -> Result.Success(null)
                         is Result.Failure ->
                             if (deleted.error == DataError.Remote.NOT_FOUND) Result.Success(null) else deleted

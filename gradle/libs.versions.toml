@@ -16,10 +16,12 @@ kotlin = "2.4.21"
 ktlint = "14.2.0"
 material3 = "1.12.0-alpha03"
 assertk = "0.28.1"
+buildkonfig = "0.23.0"
 koin-bom = "4.2.2"
 kotlinx-coroutines = "1.11.0"
 kotlinx-serialization = "1.12.0"
 ksp = "2.3.13"
+ktor = "3.6.1"
 room = "2.8.5"
 sqlite = "2.6.2"
 turbine = "1.2.1"
@@ -58,6 +60,12 @@ room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
 room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
 sqlite-bundled = { module = "androidx.sqlite:sqlite-bundled", version.ref = "sqlite" }
 compose-uiTestJunit4 = { module = "org.jetbrains.compose.ui:ui-test-junit4", version.ref = "composeMultiplatform" }
+ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
+ktor-client-content-negotiation = { module = "io.ktor:ktor-client-content-negotiation", version.ref = "ktor" }
+ktor-serialization-kotlinx-json = { module = "io.ktor:ktor-serialization-kotlinx-json", version.ref = "ktor" }
+ktor-client-okhttp = { module = "io.ktor:ktor-client-okhttp", version.ref = "ktor" }
+ktor-client-darwin = { module = "io.ktor:ktor-client-darwin", version.ref = "ktor" }
+ktor-client-mock = { module = "io.ktor:ktor-client-mock", version.ref = "ktor" }
 
 # Gradle plugin artifacts, compileOnly on the build-logic classpath
 android-gradlePlugin = { module = "com.android.tools.build:gradle", version.ref = "agp" }
@@ -66,6 +74,10 @@ compose-compiler-gradlePlugin = { module = "org.jetbrains.kotlin:compose-compile
 compose-multiplatform-gradlePlugin = { module = "org.jetbrains.compose:compose-gradle-plugin", version.ref = "composeMultiplatform" }
 ksp-gradlePlugin = { module = "com.google.devtools.ksp:com.google.devtools.ksp.gradle.plugin", version.ref = "ksp" }
 room-gradlePlugin = { module = "androidx.room:room-gradle-plugin", version.ref = "room" }
+buildkonfig-gradlePlugin = { module = "com.codingfeline.buildkonfig:buildkonfig-gradle-plugin", version.ref = "buildkonfig" }
+
+[bundles]
+ktor-common = ["ktor-client-core", "ktor-client-content-negotiation", "ktor-serialization-kotlinx-json"]
 
 [plugins]
 androidApplication = { id = "com.android.application", version.ref = "agp" }
@@ -77,6 +89,7 @@ ktlint = { id = "org.jlleitschuh.gradle.ktlint", version.ref = "ktlint" }
 kotlinSerialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
 room = { id = "androidx.room", version.ref = "room" }
+buildkonfig = { id = "com.codingfeline.buildkonfig", version.ref = "buildkonfig" }
 
 # Convention plugins from build-logic
 convention-kmp-library = { id = "com.androidlearning.sliide.convention.kmp.library", version = "unspecified" }
@@ -85,3 +98,4 @@ convention-cmp-feature = { id = "com.androidlearning.sliide.convention.cmp.featu
 convention-cmp-application = { id = "com.androidlearning.sliide.convention.cmp.application", version = "unspecified" }
 convention-android-application-compose = { id = "com.androidlearning.sliide.convention.android.application.compose", version = "unspecified" }
 convention-room = { id = "com.androidlearning.sliide.convention.room", version = "unspecified" }
+convention-buildkonfig = { id = "com.androidlearning.sliide.convention.buildkonfig", version = "unspecified" }

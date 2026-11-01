@@ -9,9 +9,9 @@ import androidx.room.Entity
  * the primary key. There is no foreign key to `users`, because a pending DELETE outlives its `users` row.
  * [queuedAtEpochMillis] is the first time this user was queued and is kept when a later write merges into the row.
  */
-@Entity(tableName = "pending_sync", primaryKeys = ["user_id"])
+@Entity(tableName = DatabaseConstants.PendingSync.TABLE, primaryKeys = [DatabaseConstants.PendingSync.USER_ID])
 data class PendingSyncEntity(
-    @Embedded(prefix = "user_") val user: UserEntity,
-    @ColumnInfo(name = "operation") val operation: PendingOperation,
-    @ColumnInfo(name = "queued_at_epoch_millis") val queuedAtEpochMillis: Long,
+    @Embedded(prefix = DatabaseConstants.PendingSync.USER_PREFIX) val user: UserEntity,
+    @ColumnInfo(name = DatabaseConstants.PendingSync.OPERATION) val operation: PendingOperation,
+    @ColumnInfo(name = DatabaseConstants.PendingSync.QUEUED_AT) val queuedAtEpochMillis: Long,
 )

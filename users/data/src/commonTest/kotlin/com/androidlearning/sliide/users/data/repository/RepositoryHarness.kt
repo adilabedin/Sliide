@@ -5,8 +5,8 @@ import com.androidlearning.sliide.core.database.PendingSyncEntity
 import com.androidlearning.sliide.core.database.UserEntity
 import com.androidlearning.sliide.users.data.fake.FakeDatabaseTransactionRunner
 import com.androidlearning.sliide.users.data.fake.FakePendingSyncDao
+import com.androidlearning.sliide.users.data.fake.FakeUserApiClient
 import com.androidlearning.sliide.users.data.fake.FakeUserDao
-import com.androidlearning.sliide.users.data.fake.FakeUserRemoteDataSource
 import com.androidlearning.sliide.users.data.fake.TestClock
 import com.androidlearning.sliide.users.domain.model.Gender
 import com.androidlearning.sliide.users.domain.model.RemoteUser
@@ -24,18 +24,18 @@ class RepositoryHarness(
     val pendingSyncDao = FakePendingSyncDao()
     val userDao = FakeUserDao(pendingSyncDao)
     val transactionRunner = FakeDatabaseTransactionRunner(userDao, pendingSyncDao)
-    val remote = FakeUserRemoteDataSource()
+    val apiClient = FakeUserApiClient()
     val clock = TestClock()
     val repository = newRepository()
 
-    fun newRepository(syncScope: CoroutineScope = scope): OfflineFirstUserRepository =
+    fun newRepository(applicationScope: CoroutineScope = scope): OfflineFirstUserRepository =
         OfflineFirstUserRepository(
             userDao = userDao,
             pendingSyncDao = pendingSyncDao,
             transactionRunner = transactionRunner,
-            remote = remote,
+            apiClient = apiClient,
             clock = clock,
-            syncScope = syncScope,
+            applicationScope = applicationScope,
         )
 
     suspend fun seedUser(entity: UserEntity): UserEntity = entity.also { userDao.upsert(it) }
