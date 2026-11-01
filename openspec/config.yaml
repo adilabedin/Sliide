@@ -19,10 +19,11 @@ context: |
   - Dependencies are added only through gradle/libs.versions.toml.
 
   ## Module architecture
-  - build-logic convention plugins; :core:domain, :core:data, :core:database, :core:designsystem, :core:presentation;
-    :feature:users (split into domain/data/presentation if the structure skill requires it); thin entry points
-    :composeApp / :androidApp and iosApp.
-  - Features never depend on other features. Presentation depends on domain only, never on data implementations.
+  - build-logic convention plugins; :core:database (Room KMP), :core:designsystem (theme); the users feature as
+    top-level :users:domain, :users:data, :users:presentation; thin entry points :composeApp / :androidApp and iosApp.
+    Code stays in the feature until a second feature needs it, then moves to a :core:* module.
+  - Features never depend on other features; core never depends on features.
+    Presentation depends on domain only, never on data implementations.
     Data implements interfaces defined in domain.
   - Business logic (validation, relative-time formatting, state reduction) lives in commonMain.
     Use expect/actual only for genuine platform differences, and justify each one in design.md.

@@ -1,6 +1,8 @@
 rootProject.name = "Sliide"
+enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
 pluginManagement {
+    includeBuild("build-logic")
     repositories {
         google {
             mavenContent {
@@ -28,4 +30,9 @@ dependencyResolutionManagement {
 }
 
 include(":androidApp")
-include(":shared")
+include(":composeApp")
+include(":core:designsystem")
+include(":core:database")
+include(":users:domain")
+include(":users:data")
+include(":users:presentation")
