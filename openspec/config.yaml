@@ -1,0 +1,65 @@
+schema: spec-driven
+
+context: |
+  ## Project
+  Sliide "UX Innovator" challenge: a user management app built on the GoRest public API
+  (https://gorest.co.in/public/v2/users). CLAUDE.md at the repo root holds the full brief and is the source of truth.
+  Features: (1) a user feed loaded from the LAST page of /users, showing name, email and a relative timestamp
+  ("5 minutes ago") computed in shared code, with a shimmer while loading and friendly error states such as "No Internet";
+  (2) a FAB that opens an add-user form with real-time name and email validation; on HTTP 201 the new user is
+  inserted at the top of the list; (3) long-press → confirm delete; on HTTP 204 the row is removed with an animation
+  and a Snackbar with Undo restores the user before the delete is finalised; (4) an adaptive layout: a single list in portrait,
+  master-detail or a two-column grid in landscape and on tablets.
+
+  ## Fixed stack (do not propose alternatives)
+  - Kotlin Multiplatform targeting Android and iOS. 100% shared UI in Compose Multiplatform, Material 3, light and dark theme.
+  - Clean Architecture (domain / data / presentation) with MVI in the presentation layer.
+  - Ktor for networking, Room KMP as the offline-first local cache (the database is the single source of truth for the UI),
+    Koin for DI.
+  - Dependencies are added only through gradle/libs.versions.toml.
+
+  ## Module architecture
+  - build-logic convention plugins; :core:domain, :core:data, :core:database, :core:designsystem, :core:presentation;
+    :feature:users (split into domain/data/presentation if the structure skill requires it); thin entry points
+    :composeApp / :androidApp and iosApp.
+  - Features never depend on other features. Presentation depends on domain only, never on data implementations.
+    Data implements interfaces defined in domain.
+  - Business logic (validation, relative-time formatting, state reduction) lives in commonMain.
+    Use expect/actual only for genuine platform differences, and justify each one in design.md.
+  - The GoRest bearer token needed for POST/DELETE is never committed to the repo.
+
+  ## UI previews (global rule)
+  Every composable that is NOT a Root composable (that is, Screen composables and every extracted sub-composable) MUST ship
+  one @Preview function per distinct visual state, following android-compose-components: one function per state, no
+  PreviewParameter; light and dark; empty/single/many and loading/error/success where they apply; compact (320dp) and
+  expanded (840dp) widths when the layout reflows. Every preview is wrapped in the app theme and uses realistic sample data.
+  Root composables (the ViewModel-wired entry points) do not get previews.
+
+  ## Acceptance criteria (global)
+  The only global acceptance criterion: for EVERY module a change affects, all unit tests AND all instrumented tests
+  run and pass. A change may add its own criteria on top. Tests are never disabled, skipped or weakened
+  to reach green; fix the cause instead. Instrumented tests run on an emulator managed through the android-cli skill.
+  Every tasks.md ends with a task that runs these tests for each affected module.
+
+  ## Conventions: skills to invoke
+  Skills live in .claude/skills/<name>/SKILL.md. Read a skill when the task matches its line below.
+  When a skill's guidance conflicts with this file, this file wins.
+  - android-cli: Use whenever you need to interact with an Android device or emulator: create/start/stop an AVD, install and run the app, inspect the screen with `android layout` / `android screen capture`, render a Compose preview, search Android docs or look up the latest artifact versions. ALWAYS use it to launch the app and explore features manually, and to host instrumented test runs.
+  - kmp-module-structure: PRIMARY structure skill. Use when creating a module, deciding where code lives, configuring build-logic Gradle 9 convention plugins or Compose Multiplatform setup, or fixing Android previews in KMP modules.
+  - android-module-structure: Use only for Android-only modules or when kmp-module-structure doesn't cover the case; it covers module layout and dependency rules for the Android side.
+  - android-version-catalog: Use when adding or updating a library, plugin, bundle or version in libs.versions.toml, or creating a convention plugin for a library with non-trivial Gradle setup (KSP, Room, compiler plugins).
+  - android-data-layer: Use when writing data sources, repositories, DTOs, mappers, Room entities/DAOs, the Ktor HttpClient, safe-call helpers or offline-first sync logic.
+  - android-error-handling: Use when defining or propagating typed errors anywhere (data, domain, validation) through the Result<T, E> / DataError / EmptyResult wrapper and its map/onSuccess/onFailure helpers.
+  - android-di-koin: Use when defining Koin modules per layer, providing repositories or ViewModels, injecting with koinViewModel(), or assembling modules in the app entry point.
+  - android-presentation-mvi: Use for every screen: State/Action/Event types, the ViewModel, the Root/Screen composable split, UI models, UiText error mapping and SavedStateHandle process-death handling.
+  - android-navigation: Use when defining type-safe routes, adding screens to a feature nav graph, navigating across features through callbacks, or wiring nav graphs in the app module.
+  - android-compose-architecture: Use when structuring a screen-level composable: stability, recomposition, state ownership, side effects (LaunchedEffect etc.), deferred state reads and lazy-list performance.
+  - android-compose-components: Use every time you write or modify a non-Root composable (cards, list items, FAB, fields, dialogs, sub-composables): parameter design, Material 3/design-system reuse, string resources, animations and one preview per state.
+  - compose-adaptive-layouts: Use when the composable tree must change structurally across device configurations (portrait list vs landscape/tablet master-detail or grid), not for simple responsive sizing.
+  - kotlin-coroutines: Use when writing suspend functions, scopes, dispatchers, cancellation-safe code, parallel work or synchronisation (Mutex, limitedParallelism) that is not primarily Flow-based.
+  - kotlin-flows: Use when writing StateFlow/SharedFlow/Channel, stateIn/shareIn, flow operators, lifecycle-aware collection, callback-to-flow conversion, or offline-first reactive streams from Room.
+  - android-unit-testing: Use when testing ViewModels, validators, mappers, formatters, use cases or reducers in-process with JUnit5, AssertK, Turbine, fakes over mocks and injected test dispatchers.
+  - android-integration-testing: Use when testing real classes wired together across an I/O boundary (repositories with in-memory Room, Ktor MockEngine, fake Clock), preferably as instrumented tests.
+  - android-ui-testing: Use when writing instrumented Compose UI tests (createAndroidComposeRule), UI + real ViewModel tests, or feature E2E tests with the Robot pattern.
+  - android-jvm-test-coverage: Use when asked for a module's JVM unit-test coverage report from the command line, without modifying build files.
+  - kotlin-mutation-testing: Use ONLY when mutation testing is explicitly requested, to audit how well one test class catches behaviour changes in its production code.
