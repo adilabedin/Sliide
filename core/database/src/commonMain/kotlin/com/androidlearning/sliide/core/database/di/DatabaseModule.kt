@@ -2,6 +2,8 @@ package com.androidlearning.sliide.core.database.di
 
 import androidx.room.RoomDatabase
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
+import com.androidlearning.sliide.core.database.DatabaseTransactionRunner
+import com.androidlearning.sliide.core.database.RoomDatabaseTransactionRunner
 import com.androidlearning.sliide.core.database.SliideDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
@@ -24,4 +26,6 @@ val databaseModule =
                 .build()
         }
         single { get<SliideDatabase>().userDao }
+        single { get<SliideDatabase>().pendingSyncDao }
+        single<DatabaseTransactionRunner> { RoomDatabaseTransactionRunner(get()) }
     }

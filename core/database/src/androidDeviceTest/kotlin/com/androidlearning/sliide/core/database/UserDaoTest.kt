@@ -6,7 +6,9 @@ import androidx.test.platform.app.InstrumentationRegistry
 import app.cash.turbine.test
 import assertk.assertThat
 import assertk.assertions.containsExactly
+import assertk.assertions.containsExactlyInAnyOrder
 import assertk.assertions.isEmpty
+import assertk.assertions.isEqualTo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
 import kotlin.test.AfterTest
@@ -81,6 +83,68 @@ class UserDaoTest {
             dao.observeAll().test {
                 assertThat(awaitItem()).containsExactly(renamed)
             }
+        }
+
+    @Test
+    fun usersWithEqualTimestampsAreOrderedByIdDescending() =
+        runTest {
+            val sameTime = john.copy(createdAtEpochMillis = jane.createdAtEpochMillis)
+            dao.upsert(jane)
+            dao.upsert(sameTime)
+
+            dao.observeAll().test {
+                assertThat(awaitItem()).containsExactly(sameTime, jane)
+            }
+        }
+
+    @Test
+    fun replaceAllSwapsTheWholeTable() =
+        runTest {
+            dao.upsert(jane)
+            dao.upsert(john)
+            val newcomer = jane.copy(id = 7_401_003, email = "new@example.com")
+
+            dao.replaceAll(listOf(newcomer))
+
+            assertThat(dao.getAll()).containsExactlyInAnyOrder(newcomer)
+        }
+
+    @Test
+    fun getByIdReturnsUserOrNull() =
+        runTest {
+            dao.upsert(jane)
+
+            assertThat(dao.getById(jane.id)).isEqualTo(jane)
+            assertThat(dao.getById(-99)).isEqualTo(null)
+        }
+
+    @Test
+    fun nextTempIdIsMinusOneOnEmptyDatabase() =
+        runTest {
+            assertThat(dao.nextTempId()).isEqualTo(-1L)
+        }
+
+    @Test
+    fun nextTempIdIsMinusOneWhenOnlyServerIdsExist() =
+        runTest {
+            dao.upsert(jane)
+
+            assertThat(dao.nextTempId()).isEqualTo(-1L)
+        }
+
+    @Test
+    fun nextTempIdStaysBelowTheMinimumAcrossBothTables() =
+        runTest {
+            dao.upsert(jane.copy(id = -3))
+            database.pendingSyncDao.upsert(
+                PendingSyncEntity(
+                    user = jane.copy(id = -7),
+                    operation = PendingOperation.CREATE,
+                    queuedAtEpochMillis = 1L,
+                ),
+            )
+
+            assertThat(dao.nextTempId()).isEqualTo(-8L)
         }
 
     private companion object {
