@@ -31,7 +31,10 @@ private fun ThemeSample() {
             Swatch("secondary", MaterialTheme.colorScheme.secondary)
             Swatch("tertiary", MaterialTheme.colorScheme.tertiary)
             Swatch("error", MaterialTheme.colorScheme.error)
-            Swatch("surfaceContainer", MaterialTheme.colorScheme.surfaceContainer)
+            Swatch("surfaceContainerLow (card)", MaterialTheme.colorScheme.surfaceContainerLow)
+            Swatch("inverseSurface", MaterialTheme.colorScheme.inverseSurface)
+            Swatch("destructive", MaterialTheme.extendedColors.destructive)
+            Swatch("inverseAccent", MaterialTheme.extendedColors.inverseAccent)
         }
     }
 }
