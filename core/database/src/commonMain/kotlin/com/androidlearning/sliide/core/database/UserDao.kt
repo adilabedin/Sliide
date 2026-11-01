@@ -10,22 +10,24 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface UserDao {
     /** All cached users, newest first (ties broken by id, highest first). Emits again whenever the table changes. */
-    @Query("SELECT * FROM users ORDER BY createdAtEpochMillis DESC, id DESC")
+    @Query(
+        "SELECT * FROM ${DatabaseConstants.Users.TABLE} ORDER BY ${DatabaseConstants.Users.CREATED_AT} DESC, ${DatabaseConstants.Users.ID} DESC",
+    )
     fun observeAll(): Flow<List<UserEntity>>
 
-    @Query("SELECT * FROM users")
+    @Query("SELECT * FROM ${DatabaseConstants.Users.TABLE}")
     suspend fun getAll(): List<UserEntity>
 
-    @Query("SELECT * FROM users WHERE id = :id")
+    @Query("SELECT * FROM ${DatabaseConstants.Users.TABLE} WHERE ${DatabaseConstants.Users.ID} = :id")
     suspend fun getById(id: Long): UserEntity?
 
     @Upsert
     suspend fun upsert(user: UserEntity)
 
-    @Query("DELETE FROM users WHERE id = :id")
+    @Query("DELETE FROM ${DatabaseConstants.Users.TABLE} WHERE ${DatabaseConstants.Users.ID} = :id")
     suspend fun deleteById(id: Long)
 
-    @Query("DELETE FROM users")
+    @Query("DELETE FROM ${DatabaseConstants.Users.TABLE}")
     suspend fun deleteAll()
 
     @Insert
@@ -45,9 +47,9 @@ interface UserDao {
     @Query(
         """
         SELECT MIN(-1, COALESCE(MIN(id), 0) - 1) FROM (
-            SELECT id FROM users
+            SELECT ${DatabaseConstants.Users.ID} AS id FROM ${DatabaseConstants.Users.TABLE}
             UNION ALL
-            SELECT user_id AS id FROM pending_sync
+            SELECT ${DatabaseConstants.PendingSync.USER_ID} AS id FROM ${DatabaseConstants.PendingSync.TABLE}
         )
         """,
     )

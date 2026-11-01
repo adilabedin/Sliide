@@ -7,8 +7,12 @@ kotlin {
         commonMain.dependencies {
             implementation(projects.users.domain)
             implementation(projects.core.database)
+            implementation(projects.core.data)
             implementation(project.dependencies.platform(libs.koin.bom))
             implementation(libs.koin.core)
+        }
+        commonTest.dependencies {
+            implementation(libs.ktor.client.mock)
         }
     }
 }

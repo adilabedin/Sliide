@@ -16,15 +16,15 @@ import com.androidlearning.sliide.core.database.RoomDatabaseTransactionRunner
 import com.androidlearning.sliide.core.database.SliideDatabase
 import com.androidlearning.sliide.core.database.UserDao
 import com.androidlearning.sliide.core.database.UserEntity
-import com.androidlearning.sliide.users.data.fake.FakeUserRemoteDataSource
+import com.androidlearning.sliide.core.domain.util.DataError
+import com.androidlearning.sliide.core.domain.util.Result
+import com.androidlearning.sliide.users.data.fake.FakeUserApiClient
 import com.androidlearning.sliide.users.data.fake.TestClock
 import com.androidlearning.sliide.users.domain.model.Gender
 import com.androidlearning.sliide.users.domain.model.SyncReport
 import com.androidlearning.sliide.users.domain.model.UserDetails
 import com.androidlearning.sliide.users.domain.model.UserStatus
 import com.androidlearning.sliide.users.domain.model.WriteStatus
-import com.androidlearning.sliide.users.domain.util.DataError
-import com.androidlearning.sliide.users.domain.util.Result
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -37,15 +37,15 @@ import kotlin.test.Test
 
 /**
  * Real [OfflineFirstUserRepository] + real file-backed Room database + real [RoomDatabaseTransactionRunner]; only the
- * network ([FakeUserRemoteDataSource]) and the clock are swapped. The database is file-backed so a test can close it
+ * network ([FakeUserApiClient]) and the clock are swapped. The database is file-backed so a test can close it
  * and reopen it with a fresh repository, simulating an app restart.
  */
 class OfflineFirstUserRepositoryIntegrationTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
     private lateinit var dbFile: File
     private lateinit var database: SliideDatabase
-    private lateinit var syncScope: CoroutineScope
-    private val remote = FakeUserRemoteDataSource()
+    private lateinit var applicationScope: CoroutineScope
+    private val apiClient = FakeUserApiClient()
     private val clock = TestClock()
 
     private val jane = UserDetails(name = "Jane Doe", email = "jane@example.com", gender = Gender.FEMALE, status = UserStatus.ACTIVE)
@@ -53,13 +53,13 @@ class OfflineFirstUserRepositoryIntegrationTest {
     @BeforeTest
     fun setUp() {
         dbFile = File(context.cacheDir, "offline-first-it-${System.nanoTime()}.db")
-        syncScope = CoroutineScope(SupervisorJob())
+        applicationScope = CoroutineScope(SupervisorJob())
         database = openDatabase()
     }
 
     @AfterTest
     fun tearDown() {
-        syncScope.cancel()
+        applicationScope.cancel()
         database.close()
         context.deleteDatabase(dbFile.absolutePath)
         listOf("", "-wal", "-shm", "-journal").forEach { File(dbFile.absolutePath + it).delete() }
@@ -68,7 +68,7 @@ class OfflineFirstUserRepositoryIntegrationTest {
     @Test
     fun offlineCreateQueuesAndSurvivesDatabaseReopen() =
         runTest {
-            remote.defaultError = DataError.Remote.NO_INTERNET
+            apiClient.defaultError = DataError.Remote.NO_INTERNET
 
             val result = repository().createUser(jane)
 
@@ -87,7 +87,7 @@ class OfflineFirstUserRepositoryIntegrationTest {
     @Test
     fun syncAfterReopenRekeysToExactlyOneRowUnderServerId() =
         runTest {
-            remote.defaultError = DataError.Remote.NO_INTERNET
+            apiClient.defaultError = DataError.Remote.NO_INTERNET
             repository().createUser(jane)
             val tempId =
                 database.userDao
@@ -96,8 +96,8 @@ class OfflineFirstUserRepositoryIntegrationTest {
                     .id
             reopenDatabase()
 
-            remote.defaultError = null
-            remote.nextServerId = 7012
+            apiClient.defaultError = null
+            apiClient.nextServerId = 7012
             val report = repository().syncPending()
 
             assertThat(report).isInstanceOf(Result.Success::class)
@@ -111,9 +111,9 @@ class OfflineFirstUserRepositoryIntegrationTest {
     @Test
     fun rejectedReplayDropsEntryAndTempUserAcrossReopen() =
         runTest {
-            remote.defaultError = DataError.Remote.NO_INTERNET
+            apiClient.defaultError = DataError.Remote.NO_INTERNET
             repository().createUser(jane)
-            remote.defaultError = DataError.Remote.VALIDATION
+            apiClient.defaultError = DataError.Remote.VALIDATION
 
             val report = repository().syncPending()
             reopenDatabase()
@@ -126,10 +126,10 @@ class OfflineFirstUserRepositoryIntegrationTest {
     @Test
     fun failureInsideRekeyTransactionRollsBackEverything() =
         runTest {
-            remote.defaultError = DataError.Remote.NO_INTERNET
+            apiClient.defaultError = DataError.Remote.NO_INTERNET
             repository().createUser(jane)
             val before = database.userDao.getAll().single()
-            remote.defaultError = null
+            apiClient.defaultError = null
 
             // The re-key deletes the temp row, then upserts the server user: failing that upsert must undo the delete.
             val failingDao = FailingUpsertUserDao(database.userDao)
@@ -145,9 +145,9 @@ class OfflineFirstUserRepositoryIntegrationTest {
             userDao = userDao,
             pendingSyncDao = database.pendingSyncDao,
             transactionRunner = RoomDatabaseTransactionRunner(database),
-            remote = remote,
+            apiClient = apiClient,
             clock = clock,
-            syncScope = syncScope,
+            applicationScope = applicationScope,
         )
 
     private fun openDatabase(): SliideDatabase =

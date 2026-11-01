@@ -4,9 +4,9 @@ import assertk.assertThat
 import assertk.assertions.containsExactly
 import assertk.assertions.isEqualTo
 import com.androidlearning.sliide.core.database.PendingOperation
+import com.androidlearning.sliide.core.domain.util.Result
 import com.androidlearning.sliide.users.data.fake.RemoteRequest
 import com.androidlearning.sliide.users.domain.model.SyncReport
-import com.androidlearning.sliide.users.domain.util.Result
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -26,7 +26,7 @@ class OfflineFirstUserRepositoryConcurrencyTest {
             h.seedPending(h.seedUser(userEntity(1)), PendingOperation.UPDATE, queuedAt = 100)
             h.seedPending(h.seedUser(userEntity(2)), PendingOperation.UPDATE, queuedAt = 200)
             val gate = CompletableDeferred<Unit>()
-            h.remote.gate = gate
+            h.apiClient.gate = gate
 
             val first = async { h.repository.syncPending() }
             runCurrent()
@@ -37,7 +37,7 @@ class OfflineFirstUserRepositoryConcurrencyTest {
             val expected = Result.Success(SyncReport(synced = 2, rejected = 0))
             assertThat(first.await()).isEqualTo(expected)
             assertThat(second.await()).isEqualTo(expected)
-            assertThat(h.remote.requests.map { (it as RemoteRequest.Update).id }).containsExactly(1L, 2L)
+            assertThat(h.apiClient.requests.map { (it as RemoteRequest.Update).id }).containsExactly(1L, 2L)
         }
 
     @Test
@@ -46,18 +46,18 @@ class OfflineFirstUserRepositoryConcurrencyTest {
             val h = RepositoryHarness(backgroundScope)
             (1L..10L).forEach { id -> h.seedPending(h.seedUser(userEntity(id)), PendingOperation.UPDATE, queuedAt = id) }
             val firstRequest = CompletableDeferred<Unit>()
-            h.remote.gate = firstRequest
+            h.apiClient.gate = firstRequest
 
             val replay = async { h.repository.syncPending() }
             runCurrent() // replay holds the write lock with request #1 in flight
             val create = async { h.repository.createUser(details()) }
             runCurrent() // create waits for the lock
-            h.remote.gate = null
+            h.apiClient.gate = null
             firstRequest.complete(Unit)
 
             replay.await()
             create.await()
-            val order = h.remote.requests
+            val order = h.apiClient.requests
             assertThat(order[0]).isEqualTo(RemoteRequest.Update(1, details(name = "User 1", email = "user1@example.com")))
             assertThat(order[1]).isEqualTo(RemoteRequest.Create(details()))
             assertThat(order.drop(2).map { (it as RemoteRequest.Update).id }).containsExactly(2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L, 10L)
@@ -69,7 +69,7 @@ class OfflineFirstUserRepositoryConcurrencyTest {
             val h = RepositoryHarness(backgroundScope)
             h.seedPending(h.seedUser(userEntity(1)), PendingOperation.UPDATE)
             val gate = CompletableDeferred<Unit>()
-            h.remote.gate = gate
+            h.apiClient.gate = gate
 
             val cancelled = launch { h.repository.syncPending() }
             runCurrent()
@@ -89,24 +89,24 @@ class OfflineFirstUserRepositoryConcurrencyTest {
 
             // First process: entries 1 and 2 succeed, then the OS kills the task while request 3 is in flight.
             val killedScope = CoroutineScope(backgroundScope.coroutineContext + Job())
-            val firstProcess = h.newRepository(syncScope = killedScope)
-            h.remote.ungatedRequests = 2
-            h.remote.gate = CompletableDeferred()
+            val firstProcess = h.newRepository(applicationScope = killedScope)
+            h.apiClient.ungatedRequests = 2
+            h.apiClient.gate = CompletableDeferred()
             val pass = killedScope.async { firstProcess.syncPending() }
             runCurrent()
-            assertThat(h.remote.requests.size).isEqualTo(3)
+            assertThat(h.apiClient.requests.size).isEqualTo(3)
             killedScope.cancel()
             runCurrent()
 
             assertThat(h.pendingSyncDao.entries.map { it.user.id }).containsExactly(3L, 4L, 5L)
 
             // Next process resumes from entry 3.
-            h.remote.gate = null
-            h.remote.ungatedRequests = 0
-            val sentBefore = h.remote.requests.size
+            h.apiClient.gate = null
+            h.apiClient.ungatedRequests = 0
+            val sentBefore = h.apiClient.requests.size
             h.newRepository().syncPending()
             val resent =
-                h.remote.requests
+                h.apiClient.requests
                     .drop(sentBefore)
                     .map { (it as RemoteRequest.Update).id }
             assertThat(resent).containsExactly(3L, 4L, 5L)

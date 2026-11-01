@@ -22,6 +22,7 @@ dependencies {
     compileOnly(libs.compose.multiplatform.gradlePlugin)
     compileOnly(libs.ksp.gradlePlugin)
     compileOnly(libs.room.gradlePlugin)
+    compileOnly(libs.buildkonfig.gradlePlugin)
 }
 
 tasks.validatePlugins {
@@ -50,6 +51,10 @@ gradlePlugin {
         register("androidApplicationCompose") {
             id = libs.plugins.convention.android.application.compose.get().pluginId
             implementationClass = "AndroidApplicationComposeConventionPlugin"
+        }
+        register("buildkonfig") {
+            id = libs.plugins.convention.buildkonfig.get().pluginId
+            implementationClass = "BuildKonfigConventionPlugin"
         }
         register("room") {
             id = libs.plugins.convention.room.get().pluginId
