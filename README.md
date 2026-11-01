@@ -9,13 +9,13 @@ Clean Architecture (domain / data / presentation) with MVI, Koin for DI and Room
 
 | Module | Holds | Depends on |
 |---|---|---|
-| `:users:domain` | `User` and sync models, `UserRepository` and `UserApiClient` interfaces | `:core:domain` |
+| `:users:domain` | `User` and sync models, `UserRepository` and `UserApiClient` interfaces, `UserDetailsValidator` | `:core:domain` |
 | `:users:data` | `OfflineFirstUserRepository`, `KtorUserApiClient`, `PendingSyncMerger`, DTOs, entity↔domain mappers, Koin module | users domain, `:core:database`, `:core:data` |
-| `:users:presentation` | `UsersViewModel` (MVI), `UsersRoot` / `UsersScreen`, strings, Koin module | users domain, `:core:designsystem` |
+| `:users:presentation` | `UsersListDetailRoot` (adaptive list-detail), `UsersViewModel` / `ProfileViewModel` (MVI) and their screens, `DeleteUndoController`, relative-time and error-message mapping, strings, Koin module | users domain, `:core:designsystem` |
 | `:core:domain` | `Result` / `EmptyResult` / `DataError` and their helpers | — |
 | `:core:data` | Ktor `HttpClientFactory`, the `HttpClient` `get` / `post` / `patch` / `delete` extensions, per-platform engine, BuildKonfig GoRest credentials, `ApplicationScope` qualifier | `:core:domain` |
 | `:core:database` | Room KMP `SliideDatabase`: `users` and `pending_sync` tables, their DAOs, `DatabaseTransactionRunner`, per-platform builder | — |
-| `:core:designsystem` | `SliideTheme`: light/dark Material 3 colour schemes and typography | — |
+| `:core:designsystem` | `SliideTheme` (palette, typography, shape/spacing/motion tokens), shared components (card, avatar, shimmer, segmented toggle, FAB, Undo snackbar, destructive button, banners), `DeviceConfiguration` | — |
 | `:composeApp` | Shared app shell `App()`, Koin assembly `initKoin(applicationScope)` / `initKoinIos()`, iOS framework `ComposeApp` | everything above |
 | `:androidApp` | `SliideApplication` (owns the application `CoroutineScope`, starts Koin), `MainActivity` | `:composeApp` |
 | `iosApp` | SwiftUI shell; starts Koin with `initKoinIos()` in `iOSApp.init()` and hosts `MainViewController()` | `ComposeApp` framework |
@@ -187,6 +187,68 @@ collector.
 Because operations now outlive their caller, the crash-safety tests simulate a process kill by cancelling the
 application scope itself (a child scope passed to the repository), not by cancelling the caller.
 
+
+### UI: feed, profile, delete with Undo
+
+The planning artifacts are in [`openspec/changes/build-users-ui`](./openspec/changes/build-users-ui).
+
+**The cache is the only data source.** `UsersViewModel` builds its state from one `combine`: `observeUsers()`, a
+one-minute ticker that recomputes the relative "Added 5 minutes ago" labels, the open Undo window, and the refresh
+status. A refresh never writes to the screen state directly; its results arrive only through the cache. The feed
+shows:
+- **20 lazily built shimmer cards** while the cache is empty and the first refresh is still running;
+- a **full-screen error** with Retry when the refresh failed and nothing is cached;
+- a slim, dismissible **banner** ("No internet connection") above the cached list when there is data to show.
+
+**One adaptive scaffold, no NavHost.** `UsersListDetailRoot` hosts Material 3 Adaptive's `ListDetailPaneScaffold`:
+- the feed is the list pane and the reusable profile is the detail pane;
+- on phones the profile opens full screen and back returns to the feed;
+- in landscape and on small tablets the feed becomes a two-column grid;
+- on wide screens the feed and the profile sit side by side, with the selected card highlighted.
+
+The navigator's content key is a plain `Long` (the user id, or a `CREATE` sentinel), so the open profile survives
+rotation, resizing and process death. Back is handled with Compose's `BackHandler`, because the "navigable" scaffold
+variant is Android-only.
+
+**One reusable profile.** A single `ProfileViewModel` is pointed at a new target with `OnOpen(key)` and serves three
+modes:
+- **View:** the Edit icon sits at the top right.
+- **Edit:** the icon animates into a **Save** text button, and a close icon discards the draft.
+- **Create:** the add-user FAB opens a blank form titled "New user".
+
+It also handles:
+- **Validation:** `UserDetailsValidator` is shared domain logic and runs as you type.
+- **Process death:** the target, mode and draft are kept in `SavedStateHandle`.
+- **Pane closed:** an `OnDismiss` resets the ViewModel, so the next open starts clean.
+- **User removed from the cache:** the profile closes. It does so silently when the user was a pending offline user
+  that has just received its server id.
+
+**The Undo window outlives every screen.** A confirmed delete removes the user locally at once. `DeleteUndoController`
+is an app-wide Koin singleton with its own long-lived scope. It owns the 5-second window and guarantees every delete
+ends exactly once:
+- either with `restoreUser`, when the user presses Undo;
+- or with `finalizeDelete`, when the timer runs out, the snackbar is swiped away, or a newer delete starts.
+
+Its timer was not put in `viewModelScope`, because if the activity finished during the window, the delete would never
+be finalised and `refresh` would stay blocked. The snackbar is a normal `SnackbarHost` on the feed, driven by the
+controller's state, with a countdown line that resumes after rotation.
+
+**Design system.** All of this lives in `:core:designsystem`:
+- **Palette:** deep ink neutrals, a midnight primary, one restrained champagne accent, and a refined red used only for
+  destructive actions, in matching light and dark schemes.
+- **Cards:** separated from the background by tone and a hairline border, not by shadows.
+- **Tokens:** shared shape, spacing and motion values.
+- **`ContrastTest`:** computes the WCAG ratio for every foreground/background pair the app uses and fails the build
+  below AA.
+
+**Deviations from the brief.** These were agreed during planning:
+- **"Added …" instead of "Last synced …":** the cache records when it first saw a user, not when that user was last
+  synced.
+- **Removed locally on confirm:** the row disappears as soon as the delete is confirmed, and the network `DELETE` is
+  sent when the Undo window ends, rather than waiting for the 204. This keeps Undo instant and works offline.
+- **An extra Status toggle (Active / Inactive):** GoRest requires a status when a user is created.
+- **A back arrow before "Profile" on full-screen profiles:** iOS has no system back button.
+
 ## Running the apps
 
 **First, set the GoRest token.** Add your token (from [gorest.co.in](https://gorest.co.in/consumer/login)) to the
@@ -207,7 +269,7 @@ try to write anything.
 
 - Unit tests (shared `commonTest`, on the JVM): `./gradlew testAndroidHostTest`
 - Unit tests on iOS: `./gradlew iosSimulatorArm64Test`
-- Instrumented tests (emulator running): `./gradlew :core:database:connectedAndroidDeviceTest :core:data:connectedAndroidDeviceTest :users:data:connectedAndroidDeviceTest :androidApp:connectedDebugAndroidTest`
+- Instrumented tests (emulator running): `./gradlew :core:database:connectedAndroidDeviceTest :core:data:connectedAndroidDeviceTest :users:data:connectedAndroidDeviceTest :users:presentation:connectedAndroidDeviceTest :androidApp:connectedDebugAndroidTest`
 - Everything: `./gradlew build` and `./gradlew :composeApp:linkDebugFrameworkIosSimulatorArm64`
 - Lint: `./gradlew ktlintCheck` (`./gradlew ktlintFormat` fixes most issues)
 
@@ -293,6 +355,31 @@ scope) and flagged problems that the request didn't mention:
 Claude then checked its own tests by temporarily breaking the code: removing the outbox-first enqueue, and running
 operations in the caller instead of the application scope. In both cases the reworked crash-safety and new lifetime
 tests failed, and passed again once the code was restored.
+
+
+### Example: the users UI
+
+The UI ([`openspec/changes/build-users-ui`](./openspec/changes/build-users-ui)) went from a free-form request to
+OpenSpec artifacts. Before planning, Claude asked about the four points that would change the plan:
+- the "last synced" field, which the model doesn't have;
+- the shape of the Undo bar;
+- whether add-user belongs in this change;
+- whether the ViewModel should start calling `refresh()`.
+
+It also pushed back on details in the request. Long-press is hard to discover, so cards also get a "Delete"
+accessibility action. iOS needs a back arrow, since it has no system back button. The status toggle was added because
+GoRest requires a status.
+
+During implementation it drove the emulators over `adb` to check:
+- the compact, medium and expanded layouts;
+- that a draft survives resizing from tablet to phone;
+- light and dark mode;
+- create, edit, delete and Undo while **offline**. A user that has never synced never reaches the server, so live
+  GoRest data stays untouched.
+
+That pass found a real bug: closing the profile pane didn't reset its ViewModel, so the Create form reopened with the
+old draft. The fix (`ProfileAction.OnDismiss`) came with regression tests. It also caught two visual issues, an
+untinted gap between the panes and a selection tint that matched one of the avatar tones, and verified their fixes.
 
 ---
 

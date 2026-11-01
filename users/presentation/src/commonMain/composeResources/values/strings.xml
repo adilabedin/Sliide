@@ -1,6 +1,87 @@
 <resources>
+    <!-- Feed -->
     <string name="users_title">Users</string>
+    <string name="users_subtitle">People in your workspace</string>
     <string name="users_empty_title">No users yet</string>
-    <string name="users_empty_body">Users you add will appear here.</string>
+    <string name="users_empty_body">Tap Add user to create the first one.</string>
     <string name="users_loading">Loading users</string>
+    <string name="users_add_user">Add user</string>
+    <string name="users_retry">Retry</string>
+    <string name="users_dismiss">Dismiss</string>
+    <string name="users_pending_sync">Pending sync</string>
+    <string name="users_open_profile">Open profile</string>
+    <string name="users_delete_action">Delete</string>
+    <string name="users_added_just_now">Added just now</string>
+    <plurals name="users_added_minutes">
+        <item quantity="one">Added %1$d minute ago</item>
+        <item quantity="other">Added %1$d minutes ago</item>
+    </plurals>
+    <plurals name="users_added_hours">
+        <item quantity="one">Added %1$d hour ago</item>
+        <item quantity="other">Added %1$d hours ago</item>
+    </plurals>
+    <plurals name="users_added_days">
+        <item quantity="one">Added %1$d day ago</item>
+        <item quantity="other">Added %1$d days ago</item>
+    </plurals>
+    <plurals name="users_added_months">
+        <item quantity="one">Added %1$d month ago</item>
+        <item quantity="other">Added %1$d months ago</item>
+    </plurals>
+    <plurals name="users_added_years">
+        <item quantity="one">Added %1$d year ago</item>
+        <item quantity="other">Added %1$d years ago</item>
+    </plurals>
+
+    <!-- Delete -->
+    <string name="delete_dialog_title">Delete %1$s?</string>
+    <string name="delete_dialog_body">They will be removed from your list. You will have 5 seconds to undo.</string>
+    <string name="delete_dialog_confirm">Delete</string>
+    <string name="delete_dialog_cancel">Cancel</string>
+    <string name="delete_snackbar_message">%1$s deleted</string>
+    <string name="delete_snackbar_undo">Undo</string>
+    <string name="delete_failed">Couldn\'t delete %1$s</string>
+
+    <!-- Profile -->
+    <string name="profile_title">Profile</string>
+    <string name="profile_title_create">New user</string>
+    <string name="profile_back">Back</string>
+    <string name="profile_edit">Edit profile</string>
+    <string name="profile_cancel_edit">Cancel editing</string>
+    <string name="profile_save">Save</string>
+    <string name="profile_saving">Saving</string>
+    <string name="profile_delete">Delete</string>
+    <string name="profile_name_label">Full name</string>
+    <string name="profile_email_label">Email address</string>
+    <string name="profile_gender_label">Gender</string>
+    <string name="profile_status_label">Status</string>
+    <string name="profile_gender_male">Male</string>
+    <string name="profile_gender_female">Female</string>
+    <string name="profile_status_active">Active</string>
+    <string name="profile_status_inactive">Inactive</string>
+    <string name="profile_added">Added</string>
+    <string name="profile_saved_offline">Saved offline, will sync when online</string>
+    <string name="profile_no_longer_available">This user is no longer available</string>
+    <string name="profile_select_title">Select a user</string>
+    <string name="profile_select_body">Choose someone from the list to see their profile.</string>
+
+    <!-- Validation -->
+    <string name="validation_name_required">Name is required</string>
+    <string name="validation_name_too_short">Name is too short</string>
+    <string name="validation_email_required">Email is required</string>
+    <string name="validation_email_invalid">Enter a valid email address</string>
+    <string name="validation_email_in_use">This email may already be in use</string>
+
+    <!-- Errors -->
+    <string name="error_no_internet">No internet connection</string>
+    <string name="error_no_internet_body">Check your connection and try again.</string>
+    <string name="error_timeout">The server took too long to respond</string>
+    <string name="error_server">The server ran into a problem. Please try again later.</string>
+    <string name="error_too_many_requests">Too many requests. Please try again shortly.</string>
+    <string name="error_unauthorized">Couldn\'t authenticate with the server</string>
+    <string name="error_not_found">That user no longer exists on the server</string>
+    <string name="error_validation">The server rejected these details</string>
+    <string name="error_serialization">The server sent an unexpected response</string>
+    <string name="error_unknown">Something went wrong. Please try again.</string>
+    <string name="error_local">Couldn\'t update data on this device</string>
 </resources>

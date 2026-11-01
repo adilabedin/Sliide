@@ -35,6 +35,12 @@ class CmpLibraryConventionPlugin : Plugin<Project> {
 
                 // KMP library modules have no debug variant, so preview tooling goes on androidMain.
                 "androidMainImplementation"(libs.library("compose-uiTooling"))
+
+                // Compose UI tests on a device: the test manifest supplies the host ComponentActivity.
+                "androidDeviceTestImplementation"(libs.library("compose-uiTestJunit4"))
+                "androidDeviceTestImplementation"(libs.library("compose-uiTestManifest"))
+                // ui-test-junit4 pulls an Espresso too old for API 34+ (InputManager.getInstance was removed).
+                "androidDeviceTestImplementation"(libs.library("androidx-espresso-core"))
             }
         }
     }

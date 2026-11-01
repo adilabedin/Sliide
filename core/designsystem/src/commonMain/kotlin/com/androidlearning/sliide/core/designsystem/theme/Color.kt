@@ -2,120 +2,202 @@ package com.androidlearning.sliide.core.designsystem.theme
 
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
 
-private val Indigo10 = Color(0xFF0E0F5C)
-private val Indigo20 = Color(0xFF242692)
-private val Indigo30 = Color(0xFF3B3FB0)
-private val Indigo40 = Color(0xFF5257CC)
-private val Indigo80 = Color(0xFFC0C1FF)
-private val Indigo90 = Color(0xFFE1E0FF)
+// Palette: deep ink neutrals, a midnight primary, one restrained champagne accent, and a refined red reserved for
+// destructive actions. Light and dark share the same hues; every pairing used in the app is checked by ContrastTest.
 
-private val Teal10 = Color(0xFF002020)
-private val Teal20 = Color(0xFF003737)
-private val Teal30 = Color(0xFF004F4F)
-private val Teal40 = Color(0xFF006A6A)
-private val Teal80 = Color(0xFF4CDADA)
-private val Teal90 = Color(0xFF6FF7F6)
+// Ink neutrals (dark side)
+private val Ink950 = Color(0xFF0A0B0E)
+private val Ink900 = Color(0xFF0D0E12)
+private val Ink850 = Color(0xFF16181D)
+private val Ink800 = Color(0xFF1B1D23)
+private val Ink750 = Color(0xFF22252C)
+private val Ink700 = Color(0xFF2A2D35)
+private val Ink650 = Color(0xFF262930)
+private val Ink600 = Color(0xFF23262D)
+private val InkText = Color(0xFF15171C)
+private val InkSecondary = Color(0xFF555A64)
 
-private val Coral10 = Color(0xFF3A0B00)
-private val Coral20 = Color(0xFF5E1700)
-private val Coral30 = Color(0xFF852400)
-private val Coral40 = Color(0xFFAD3300)
-private val Coral80 = Color(0xFFFFB59C)
-private val Coral90 = Color(0xFFFFDBD0)
+// Porcelain neutrals (light side)
+private val Porcelain = Color(0xFFF6F6F3)
+private val Porcelain200 = Color(0xFFEFEFEB)
+private val Porcelain300 = Color(0xFFE9E9E4)
+private val Hairline = Color(0xFFE3E3DD)
+private val Mist = Color(0xFFECECEF)
+private val MistSecondary = Color(0xFFA3A7B2)
+private val MistInverse = Color(0xFFE6E6EA)
 
-private val Red10 = Color(0xFF410002)
-private val Red20 = Color(0xFF690005)
-private val Red30 = Color(0xFF93000A)
-private val Red40 = Color(0xFFBA1A1A)
-private val Red80 = Color(0xFFFFB4AB)
-private val Red90 = Color(0xFFFFDAD6)
+// Midnight primary
+private val Midnight = Color(0xFF1E2A4A)
+private val MidnightDeep = Color(0xFF0F1730)
+private val MidnightContainer = Color(0xFFDDE2F1)
+private val MidnightDark = Color(0xFF2A3762)
+private val Periwinkle = Color(0xFFB8C4F0)
+private val PeriwinkleOn = Color(0xFF14203F)
 
-private val Neutral6 = Color(0xFF131318)
-private val Neutral10 = Color(0xFF1B1B21)
-private val Neutral12 = Color(0xFF1F1F25)
-private val Neutral17 = Color(0xFF2A292F)
-private val Neutral22 = Color(0xFF35343A)
-private val Neutral90 = Color(0xFFE4E1E9)
-private val Neutral94 = Color(0xFFEFEDF4)
-private val Neutral96 = Color(0xFFF5F2FA)
-private val Neutral98 = Color(0xFFFCF8FF)
+// Slate secondary
+private val Slate = Color(0xFF4A5468)
+private val SlateContainer = Color(0xFFE4E7EE)
+private val SlateDeep = Color(0xFF1A2130)
+private val SlateLight = Color(0xFFBCC3D3)
+private val SlateOn = Color(0xFF262D3B)
+private val SlateDarkContainer = Color(0xFF323949)
+private val SlateDarkOnContainer = Color(0xFFDDE2EE)
 
-private val NeutralVariant30 = Color(0xFF46464F)
-private val NeutralVariant50 = Color(0xFF777680)
-private val NeutralVariant60 = Color(0xFF918F9A)
-private val NeutralVariant80 = Color(0xFFC7C5D0)
-private val NeutralVariant90 = Color(0xFFE3E1EC)
+// Champagne accent
+private val Champagne = Color(0xFF8A6A2C)
+private val ChampagneDeep = Color(0xFF7A5C22)
+private val ChampagneLight = Color(0xFFD9BF86)
+private val ChampagneContainer = Color(0xFFF3E7CC)
+private val ChampagneOnContainer = Color(0xFF2E2208)
+private val ChampagneOn = Color(0xFF3A2C0A)
+private val ChampagneDarkContainer = Color(0xFF54431C)
+
+// Refined red
+private val Crimson = Color(0xFFB3261E)
+private val CrimsonDark = Color(0xFFB02A22)
+private val CrimsonContainer = Color(0xFFF9DEDC)
+private val CrimsonOnContainer = Color(0xFF410E0B)
+private val Coral = Color(0xFFFF9C94)
+private val CoralOn = Color(0xFF5C0B07)
+private val CrimsonDarkContainer = Color(0xFF8C1D18)
+private val CoralContainerOn = Color(0xFFFFDAD6)
 
 internal val LightColorScheme =
     lightColorScheme(
-        primary = Indigo40,
+        primary = Midnight,
         onPrimary = Color.White,
-        primaryContainer = Indigo90,
-        onPrimaryContainer = Indigo10,
-        secondary = Teal40,
+        primaryContainer = MidnightContainer,
+        onPrimaryContainer = MidnightDeep,
+        secondary = Slate,
         onSecondary = Color.White,
-        secondaryContainer = Teal90,
-        onSecondaryContainer = Teal10,
-        tertiary = Coral40,
+        secondaryContainer = SlateContainer,
+        onSecondaryContainer = SlateDeep,
+        tertiary = Champagne,
         onTertiary = Color.White,
-        tertiaryContainer = Coral90,
-        onTertiaryContainer = Coral10,
-        error = Red40,
+        tertiaryContainer = ChampagneContainer,
+        onTertiaryContainer = ChampagneOnContainer,
+        error = Crimson,
         onError = Color.White,
-        errorContainer = Red90,
-        onErrorContainer = Red10,
-        background = Neutral98,
-        onBackground = Neutral10,
-        surface = Neutral98,
-        onSurface = Neutral10,
-        surfaceVariant = NeutralVariant90,
-        onSurfaceVariant = NeutralVariant30,
+        errorContainer = CrimsonContainer,
+        onErrorContainer = CrimsonOnContainer,
+        background = Porcelain,
+        onBackground = InkText,
+        surface = Porcelain,
+        onSurface = InkText,
+        surfaceVariant = Hairline,
+        onSurfaceVariant = InkSecondary,
         surfaceContainerLowest = Color.White,
-        surfaceContainerLow = Neutral96,
-        surfaceContainer = Neutral94,
-        surfaceContainerHigh = Neutral90,
-        surfaceContainerHighest = NeutralVariant90,
-        outline = NeutralVariant50,
-        outlineVariant = NeutralVariant80,
-        inverseSurface = Neutral17,
-        inverseOnSurface = Neutral94,
-        inversePrimary = Indigo80,
+        surfaceContainerLow = Color.White,
+        surfaceContainer = Porcelain200,
+        surfaceContainerHigh = Porcelain300,
+        surfaceContainerHighest = Hairline,
+        outline = Color(0xFF8A8E98),
+        outlineVariant = Hairline,
+        inverseSurface = Ink600,
+        inverseOnSurface = Color(0xFFF1F1EE),
+        inversePrimary = Periwinkle,
+        scrim = Color.Black,
     )
 
 internal val DarkColorScheme =
     darkColorScheme(
-        primary = Indigo80,
-        onPrimary = Indigo20,
-        primaryContainer = Indigo30,
-        onPrimaryContainer = Indigo90,
-        secondary = Teal80,
-        onSecondary = Teal20,
-        secondaryContainer = Teal30,
-        onSecondaryContainer = Teal90,
-        tertiary = Coral80,
-        onTertiary = Coral20,
-        tertiaryContainer = Coral30,
-        onTertiaryContainer = Coral90,
-        error = Red80,
-        onError = Red20,
-        errorContainer = Red30,
-        onErrorContainer = Red90,
-        background = Neutral6,
-        onBackground = Neutral90,
-        surface = Neutral6,
-        onSurface = Neutral90,
-        surfaceVariant = NeutralVariant30,
-        onSurfaceVariant = NeutralVariant80,
-        surfaceContainerLowest = Color(0xFF0E0E13),
-        surfaceContainerLow = Neutral10,
-        surfaceContainer = Neutral12,
-        surfaceContainerHigh = Neutral17,
-        surfaceContainerHighest = Neutral22,
-        outline = NeutralVariant60,
-        outlineVariant = NeutralVariant30,
-        inverseSurface = Neutral90,
-        inverseOnSurface = Neutral17,
-        inversePrimary = Indigo40,
+        primary = Periwinkle,
+        onPrimary = PeriwinkleOn,
+        primaryContainer = MidnightDark,
+        onPrimaryContainer = MidnightContainer,
+        secondary = SlateLight,
+        onSecondary = SlateOn,
+        secondaryContainer = SlateDarkContainer,
+        onSecondaryContainer = SlateDarkOnContainer,
+        tertiary = ChampagneLight,
+        onTertiary = ChampagneOn,
+        tertiaryContainer = ChampagneDarkContainer,
+        onTertiaryContainer = ChampagneContainer,
+        error = Coral,
+        onError = CoralOn,
+        errorContainer = CrimsonDarkContainer,
+        onErrorContainer = CoralContainerOn,
+        background = Ink900,
+        onBackground = Mist,
+        surface = Ink900,
+        onSurface = Mist,
+        surfaceVariant = Ink700,
+        onSurfaceVariant = MistSecondary,
+        surfaceContainerLowest = Ink950,
+        surfaceContainerLow = Ink850,
+        surfaceContainer = Ink800,
+        surfaceContainerHigh = Ink750,
+        surfaceContainerHighest = Ink700,
+        outline = Color(0xFF7A7F8C),
+        outlineVariant = Ink650,
+        inverseSurface = MistInverse,
+        inverseOnSurface = Ink800,
+        inversePrimary = Midnight,
+        scrim = Color.Black,
+    )
+
+/** One muted avatar tone: a tonal [container] behind the initials and the [content] colour of the initials. */
+@Immutable
+data class AvatarTone(
+    val container: Color,
+    val content: Color,
+)
+
+/**
+ * Colours Material 3's scheme has no slot for. [destructive] is the filled red of destructive buttons (white label in
+ * both modes); [inverseAccent] is the accent on [androidx.compose.material3.ColorScheme.inverseSurface] (the Undo action).
+ */
+@Immutable
+data class SliideExtendedColors(
+    val destructive: Color,
+    val onDestructive: Color,
+    val inverseAccent: Color,
+    val positive: Color,
+    val shimmerBase: Color,
+    val shimmerHighlight: Color,
+    val toggleSelected: Color,
+    val avatarTones: List<AvatarTone>,
+)
+
+internal val LightExtendedColors =
+    SliideExtendedColors(
+        destructive = Crimson,
+        onDestructive = Color.White,
+        inverseAccent = ChampagneLight,
+        positive = Color(0xFF2E8B5E),
+        shimmerBase = Porcelain200,
+        shimmerHighlight = Color.White,
+        toggleSelected = Color.White,
+        avatarTones =
+            listOf(
+                AvatarTone(container = MidnightContainer, content = MidnightDeep),
+                AvatarTone(container = ChampagneContainer, content = ChampagneOnContainer),
+                AvatarTone(container = Color(0xFFDCEBE3), content = Color(0xFF0F3424)),
+                AvatarTone(container = Color(0xFFEFDDE3), content = Color(0xFF3E1424)),
+                AvatarTone(container = SlateContainer, content = SlateDeep),
+                AvatarTone(container = Color(0xFFDDE9EE), content = Color(0xFF0E2F3B)),
+            ),
+    )
+
+internal val DarkExtendedColors =
+    SliideExtendedColors(
+        destructive = CrimsonDark,
+        onDestructive = Color.White,
+        inverseAccent = ChampagneDeep,
+        positive = Color(0xFF5BC795),
+        shimmerBase = Ink800,
+        shimmerHighlight = Ink700,
+        toggleSelected = Color(0xFF353943),
+        avatarTones =
+            listOf(
+                AvatarTone(container = MidnightDark, content = MidnightContainer),
+                AvatarTone(container = ChampagneDarkContainer, content = ChampagneContainer),
+                AvatarTone(container = Color(0xFF1F3D30), content = Color(0xFFCDE9DA)),
+                AvatarTone(container = Color(0xFF45222F), content = Color(0xFFF2D6E0)),
+                AvatarTone(container = SlateDarkContainer, content = SlateDarkOnContainer),
+                AvatarTone(container = Color(0xFF1C3A46), content = Color(0xFFCFE6EF)),
+            ),
     )
