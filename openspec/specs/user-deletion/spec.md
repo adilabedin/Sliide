@@ -9,16 +9,27 @@ exactly one outcome: undone or finalised.
 
 ### Requirement: Long-press asks for confirmation
 Long-pressing a user card SHALL give haptic feedback and open a confirmation dialog. The dialog SHALL name the user and
-explain that they will have 5 seconds to undo. It SHALL offer a destructive "Delete" action and a "Cancel" action.
-Cancelling or dismissing the dialog SHALL change nothing.
+explain that they will have 5 seconds to undo. It SHALL show a close icon button labelled "Cancel" at its top start
+corner and a large bin icon above the title. It SHALL offer exactly one action button: a full-width destructive
+"Delete" button that matches the profile page's Delete button. Closing the dialog SHALL change nothing, whether by
+the close icon, back or tapping outside.
 
 #### Scenario: Long-press
 - **WHEN** the user long-presses Jane Doe's card
 - **THEN** a dialog asks to delete Jane Doe and says they will have 5 seconds to undo
 
+#### Scenario: Dialog layout
+- **WHEN** the confirmation dialog is open
+- **THEN** a close icon sits at its top start corner, a large bin icon sits above the title, and a single full-width red
+  "Delete" button with a bin icon sits at the bottom, with no separate Cancel text button
+
 #### Scenario: Cancel
-- **WHEN** the user taps Cancel or dismisses the dialog
+- **WHEN** the user taps the close icon, presses back or taps outside the dialog
 - **THEN** the dialog closes and Jane Doe's card is unchanged
+
+#### Scenario: Confirm
+- **WHEN** the user taps the full-width Delete button
+- **THEN** the dialog closes and the delete is confirmed
 
 ### Requirement: Delete is reachable without long-press
 Each user card SHALL expose a "Delete" custom accessibility action that opens the same confirmation dialog. Users of
@@ -63,7 +74,8 @@ SHALL animate back into its original position. The snackbar SHALL then close. No
 
 ### Requirement: Delete is finalised when the window ends
 When the 5-second window ends without Undo, the snackbar SHALL close and the delete SHALL be finalised through the
-repository. A server-known user is then deleted on the server, or queued for later if the failure is retryable.
+repository. A server-known user is then deleted on the server, or queued for later if the failure is one that is kept
+for a later sync (including the server failing to authenticate the app).
 
 #### Scenario: Window expires online
 - **WHEN** 5 seconds pass after confirming without Undo
@@ -72,6 +84,11 @@ repository. A server-known user is then deleted on the server, or queued for lat
 #### Scenario: Window expires offline
 - **WHEN** 5 seconds pass while offline
 - **THEN** the snackbar closes and the delete is queued for later sync, with no error shown
+
+#### Scenario: Window expires while unauthorised
+- **WHEN** 5 seconds pass and the delete request is answered with 401
+- **THEN** Jane Doe stays removed from the feed, the delete is queued for later sync, and a message says "Couldn't
+  authenticate, will retry"
 
 ### Requirement: Swiping the snackbar away does not undo
 Dismissing the snackbar early, by swipe, SHALL finalise the delete immediately rather than wait out the window. It SHALL
@@ -103,9 +120,14 @@ If another delete is confirmed while an Undo window is open, the first delete SH
 - **THEN** Jane Doe's delete is finalised at once, and the snackbar now shows "Rahul Sharma deleted" with a fresh 5-second countdown
 
 ### Requirement: A failed finalise restores the user and says so
-If finalising a delete fails permanently, the user SHALL reappear in the feed. A snackbar SHALL say the user could not
-be deleted.
+If finalising a delete fails permanently, a snackbar SHALL say the user could not be deleted, and the delete SHALL no
+longer be queued; the user SHALL reappear in the feed with the next refresh. When the server refused the delete, the
+snackbar SHALL say the server refused it.
 
 #### Scenario: Server refuses
-- **WHEN** the finalised delete is rejected as unauthorised
-- **THEN** Jane Doe's card reappears and a snackbar reads "Couldn't delete Jane Doe"
+- **WHEN** the finalised delete is answered with 422
+- **THEN** a snackbar reads "The server refused to delete Jane Doe" and Jane Doe's card reappears after the next refresh
+
+#### Scenario: Unexpected failure
+- **WHEN** the finalised delete is answered with 400
+- **THEN** a snackbar reads "Couldn't delete Jane Doe" and Jane Doe's card reappears after the next refresh
