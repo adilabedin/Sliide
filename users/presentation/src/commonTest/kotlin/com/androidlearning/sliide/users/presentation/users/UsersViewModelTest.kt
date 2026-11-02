@@ -22,6 +22,7 @@ import com.androidlearning.sliide.users.presentation.generated.resources.delete_
 import com.androidlearning.sliide.users.presentation.generated.resources.delete_refused
 import com.androidlearning.sliide.users.presentation.generated.resources.error_no_internet
 import com.androidlearning.sliide.users.presentation.generated.resources.write_queued_auth_failed
+import com.androidlearning.sliide.users.presentation.profile.ProfileKey
 import com.androidlearning.sliide.users.presentation.util.RelativeTime
 import com.androidlearning.sliide.users.presentation.util.UiText
 import kotlinx.coroutines.CompletableDeferred
@@ -367,6 +368,147 @@ class UsersViewModelTest {
             viewModel.state.test {
                 viewModel.onAction(UsersAction.OnSelectionChange(jane.id))
                 assertThat(expectMostRecentItem().selectedUserId).isEqualTo(jane.id)
+            }
+        }
+
+    @Test
+    fun twoPaneWithNothingChosenSelectsTheFirstUser() =
+        runTest {
+            val (viewModel) = viewModel()
+            viewModel.state.test {
+                viewModel.onAction(UsersAction.OnPaneLayoutChange(isTwoPane = true))
+                repository.emit(listOf(jane, rahul))
+
+                val state = expectMostRecentItem()
+                assertThat(state.defaultSelectedUserId).isEqualTo(jane.id)
+                assertThat(state.selectedUserId).isEqualTo(jane.id)
+            }
+        }
+
+    @Test
+    fun singlePaneHasNoDefaultSelection() =
+        runTest {
+            val (viewModel) = viewModel()
+            viewModel.state.test {
+                viewModel.onAction(UsersAction.OnPaneLayoutChange(isTwoPane = false))
+                repository.emit(listOf(jane, rahul))
+
+                val state = expectMostRecentItem()
+                assertThat(state.defaultSelectedUserId).isNull()
+                assertThat(state.selectedUserId).isNull()
+            }
+        }
+
+    @Test
+    fun chosenUserOverridesTheDefault() =
+        runTest {
+            val (viewModel) = viewModel()
+            viewModel.state.test {
+                viewModel.onAction(UsersAction.OnPaneLayoutChange(isTwoPane = true))
+                repository.emit(listOf(jane, rahul))
+
+                viewModel.onAction(UsersAction.OnSelectionChange(rahul.id))
+
+                val state = expectMostRecentItem()
+                assertThat(state.defaultSelectedUserId).isNull()
+                assertThat(state.selectedUserId).isEqualTo(rahul.id)
+            }
+        }
+
+    @Test
+    fun creatingHighlightsNothingAndHasNoDefault() =
+        runTest {
+            val (viewModel) = viewModel()
+            viewModel.state.test {
+                viewModel.onAction(UsersAction.OnPaneLayoutChange(isTwoPane = true))
+                repository.emit(listOf(jane, rahul))
+
+                viewModel.onAction(UsersAction.OnSelectionChange(ProfileKey.CREATE))
+
+                val state = expectMostRecentItem()
+                assertThat(state.defaultSelectedUserId).isNull()
+                assertThat(state.selectedUserId).isNull()
+            }
+        }
+
+    @Test
+    fun defaultFollowsTheFirstCardWhenTheFirstUserIsDeleted() =
+        runTest {
+            val (viewModel) = viewModel()
+            viewModel.state.test {
+                viewModel.onAction(UsersAction.OnPaneLayoutChange(isTwoPane = true))
+                repository.emit(listOf(jane, rahul))
+                assertThat(expectMostRecentItem().defaultSelectedUserId).isEqualTo(jane.id)
+
+                viewModel.onAction(UsersAction.OnDeleteRequest(jane.id))
+                viewModel.onAction(UsersAction.OnDeleteConfirm)
+                runCurrent()
+
+                val state = expectMostRecentItem()
+                assertThat(state.defaultSelectedUserId).isEqualTo(rahul.id)
+                assertThat(state.selectedUserId).isEqualTo(rahul.id)
+            }
+        }
+
+    @Test
+    fun defaultFollowsTheFirstCardWhenAUserIsCreatedAtTheTop() =
+        runTest {
+            val (viewModel) = viewModel()
+            viewModel.state.test {
+                viewModel.onAction(UsersAction.OnPaneLayoutChange(isTwoPane = true))
+                repository.emit(listOf(jane, rahul))
+
+                repository.emit(listOf(pendingAmelie, jane, rahul))
+
+                val state = expectMostRecentItem()
+                assertThat(state.defaultSelectedUserId).isEqualTo(pendingAmelie.id)
+                assertThat(state.selectedUserId).isEqualTo(pendingAmelie.id)
+            }
+        }
+
+    @Test
+    fun loadingHasNoDefaultSelection() =
+        runTest {
+            repository.refreshGate = CompletableDeferred()
+            val (viewModel) = viewModel()
+            viewModel.state.test {
+                viewModel.onAction(UsersAction.OnPaneLayoutChange(isTwoPane = true))
+
+                val state = expectMostRecentItem()
+                assertThat(state.content).isEqualTo(FeedContent.Loading)
+                assertThat(state.defaultSelectedUserId).isNull()
+                assertThat(state.selectedUserId).isNull()
+            }
+        }
+
+    @Test
+    fun emptyFeedHasNoDefaultSelection() =
+        runTest {
+            val (viewModel) = viewModel()
+            viewModel.state.test {
+                viewModel.onAction(UsersAction.OnPaneLayoutChange(isTwoPane = true))
+                repository.emit(emptyList())
+
+                val state = expectMostRecentItem()
+                assertThat(state.content).isEqualTo(FeedContent.Empty)
+                assertThat(state.defaultSelectedUserId).isNull()
+                assertThat(state.selectedUserId).isNull()
+            }
+        }
+
+    @Test
+    fun fullScreenErrorHasNoDefaultSelection() =
+        runTest {
+            repository.refreshResult = Result.Failure(DataError.Remote.NO_INTERNET)
+            val (viewModel) = viewModel()
+            viewModel.state.test {
+                viewModel.onAction(UsersAction.OnPaneLayoutChange(isTwoPane = true))
+                repository.emit(emptyList())
+
+                val state = expectMostRecentItem()
+                assertThat(state.content).isEqualTo(FeedContent.Error(noInternet))
+                assertThat(state.defaultSelectedUserId).isNull()
+                assertThat(state.selectedUserId).isNull()
             }
         }
 

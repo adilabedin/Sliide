@@ -13,6 +13,7 @@ import com.androidlearning.sliide.users.presentation.generated.resources.Res
 import com.androidlearning.sliide.users.presentation.generated.resources.delete_failed
 import com.androidlearning.sliide.users.presentation.generated.resources.delete_refused
 import com.androidlearning.sliide.users.presentation.generated.resources.write_queued_auth_failed
+import com.androidlearning.sliide.users.presentation.profile.ProfileKey
 import com.androidlearning.sliide.users.presentation.util.UiText
 import com.androidlearning.sliide.users.presentation.util.toUiText
 import kotlinx.coroutines.Job
@@ -99,7 +100,8 @@ class UsersViewModel(
             }
             is UsersAction.OnUndoDelete -> deleteUndoController.undo(action.userId)
             is UsersAction.OnCommitDelete -> deleteUndoController.commitNow(action.userId)
-            is UsersAction.OnSelectionChange -> local.update { it.copy(selectedUserId = action.userId) }
+            is UsersAction.OnSelectionChange -> local.update { it.copy(chosenKey = action.key) }
+            is UsersAction.OnPaneLayoutChange -> local.update { it.copy(isTwoPane = action.isTwoPane) }
             UsersAction.OnUserCreated -> send(UsersEvent.ScrollToTop)
             is UsersAction.OnShowMessage -> send(UsersEvent.ShowMessage(action.message))
         }
@@ -155,6 +157,14 @@ class UsersViewModel(
                 refresh.lastError != null -> FeedContent.Error(refresh.lastError.toUiText())
                 else -> FeedContent.Empty
             }
+        val defaultSelectedUserId =
+            cards.firstOrNull()?.id?.takeIf { local.isTwoPane && local.chosenKey == null && content == FeedContent.Users }
+        val selectedUserId =
+            when (local.chosenKey) {
+                null -> defaultSelectedUserId
+                ProfileKey.CREATE -> null
+                else -> local.chosenKey
+            }
         return UsersState(
             users = cards,
             content = content,
@@ -173,7 +183,8 @@ class UsersViewModel(
                     )
                 },
             confirmDelete = local.confirmDeleteId?.let { id -> cards.firstOrNull { it.id == id } },
-            selectedUserId = local.selectedUserId,
+            selectedUserId = selectedUserId,
+            defaultSelectedUserId = defaultSelectedUserId,
         )
     }
 
@@ -185,6 +196,7 @@ class UsersViewModel(
 
     private data class LocalState(
         val confirmDeleteId: Long? = null,
-        val selectedUserId: Long? = null,
+        val chosenKey: Long? = null,
+        val isTwoPane: Boolean = false,
     )
 }
