@@ -9,6 +9,7 @@ import com.androidlearning.sliide.users.data.fake.FakeDatabaseTransactionRunner
 import com.androidlearning.sliide.users.data.fake.FakePendingSyncDao
 import com.androidlearning.sliide.users.data.fake.FakeUserApiClient
 import com.androidlearning.sliide.users.data.fake.FakeUserDao
+import com.androidlearning.sliide.users.data.fake.FakeUserSyncScheduler
 import com.androidlearning.sliide.users.data.fake.TestClock
 import com.androidlearning.sliide.users.domain.model.Gender
 import com.androidlearning.sliide.users.domain.model.RemoteUser
@@ -28,6 +29,7 @@ class RepositoryHarness(
     val transactionRunner = FakeDatabaseTransactionRunner(userDao, pendingSyncDao)
     val apiClient = FakeUserApiClient()
     val clock = TestClock()
+    val syncScheduler = FakeUserSyncScheduler()
     val repository = newRepository()
 
     fun newRepository(applicationScope: CoroutineScope = scope): OfflineFirstUserRepository =
@@ -38,6 +40,7 @@ class RepositoryHarness(
             apiClient = apiClient,
             clock = clock,
             applicationScope = applicationScope,
+            syncScheduler = syncScheduler,
         )
 
     suspend fun seedUser(entity: UserEntity): UserEntity = entity.also { userDao.upsert(it) }

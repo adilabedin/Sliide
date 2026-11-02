@@ -74,6 +74,13 @@ interface UserRepository {
     suspend fun syncPending(): Result<SyncReport, DataError.Remote>
 
     /**
+     * Sends at most [userId]'s pending entry, with the same success, rejection and Undo-window rules as [syncPending],
+     * and leaves every other entry untouched. With no entry for [userId] it sends nothing and reports zero. It may run
+     * alongside a full pass; no entry is ever sent twice.
+     */
+    suspend fun syncPending(userId: Long): Result<SyncReport, DataError.Remote>
+
+    /**
      * Runs [syncPending]; only if the queue is then empty, fetches the last page of `/users` and replaces the cache
      * when it differs. On a replay failure the cache is left untouched and the failure is returned.
      */

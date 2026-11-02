@@ -29,12 +29,15 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
  */
 @OptIn(ExperimentalAtomicApi::class)
 class BackgroundTaskUserSyncScheduler(
-    backgroundUserSync: BackgroundUserSync,
+    backgroundUserSync: () -> BackgroundUserSync,
     connectivityCheck: ConnectivityCheck,
     applicationScope: CoroutineScope,
 ) : UserSyncScheduler {
-    private val runner =
-        IosBackgroundSyncRunner(backgroundUserSync, connectivityCheck, applicationScope, ::submitRequest)
+    // Built on the first background task, not at construction: the repository depends on this scheduler, and
+    // BackgroundUserSync depends on the repository, so resolving it eagerly would be a dependency cycle.
+    private val runner by lazy {
+        IosBackgroundSyncRunner(backgroundUserSync(), connectivityCheck, applicationScope, ::submitRequest)
+    }
 
     override fun schedulePeriodicSync() {
         registerOnce()
@@ -44,6 +47,12 @@ class BackgroundTaskUserSyncScheduler(
             if (!pending) submitRequest()
         }
     }
+
+    /**
+     * iOS has no per-item "run when online" task and allows one pending request per identifier, so this only makes sure
+     * a refresh request is pending; its run replays the whole queue, including [userId]'s entry (design D4).
+     */
+    override fun requestSync(userId: Long) = schedulePeriodicSync()
 
     private fun registerOnce() {
         // Registering the same identifier twice throws, so guard it for the whole process.

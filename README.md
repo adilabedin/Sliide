@@ -213,24 +213,43 @@ offline. Sync skips users that are still in their Undo window.
 The planning artifacts are in [`openspec/changes/archive/2026-11-02-add-background-sync`](./openspec/changes/archive/2026-11-02-add-background-sync).
 
 The queue is also replayed while the app isn't in the foreground, so a change saved offline reaches GoRest even if the
-user never reopens the app. A background run calls **only `syncPending()`**, never `refresh()`, so a row never
-disappears from a list the user is looking at. It shares the repository's single-flight pass, so a background run and
-a pull-to-refresh never send the same entry twice.
+user never reopens the app. A background run calls **only `syncPending()`** (or `syncPending(userId)`), never
+`refresh()`, so a row never disappears from a list the user is looking at.
+
+Two triggers, both visible in code (per-user sync: [`openspec/changes/sync-per-operation`](./openspec/changes/sync-per-operation)):
+
+1. **Per write.** When `OfflineFirstUserRepository` queues a write (a failed create, update or delete it keeps for
+   later), it calls `UserSyncScheduler.requestSync(userId)` right after the queuing transaction commits. A write that
+   succeeds, is rejected, or cancels out (offline create then delete) requests nothing.
+2. **Periodic safety net.** `initKoin()` calls `schedulePeriodicSync()` once per launch. It replays whatever is left,
+   e.g. a write whose process died before its request went out.
+
+Both replay paths share one `replayEntry(userId)` in the repository: it takes the write lock and re-reads the entry, so
+a per-user sync, a periodic run and a pull-to-refresh never send the same entry twice.
 
 | | Android | iOS |
 |---|---|---|
 | Mechanism | WorkManager unique periodic work `sync_pending_users`, every 30 min | `BGAppRefreshTask` `com.androidlearning.sliide.sync-pending-users`, not before 30 min |
+| Per-write request | unique one-time work `sync_user_<id>` with `REPLACE`, replaying only that user's entry as soon as the device is online | iOS has no per-item task: `requestSync` makes sure one app-refresh request is pending, and its run replays the whole queue |
 | Offline | `NetworkType.CONNECTED`: the OS doesn't start the job | an `NWPathMonitor` check at the start of the run; offline → completes without syncing |
 | Scheduling | on every launch with `KEEP`, so the period never restarts and a running sync is never cancelled | registered at launch; a request is submitted only if none is pending, and each run submits the next one first |
 | Time limit | none in practice | about 30 s; on expiry the run is cancelled and the remaining entries wait for the next run |
 
 - **No retry.** Every run reports success to the OS (on iOS, expiry reports failure, as Apple requires), so there is
-  no backoff. Whatever is still queued waits for the next periodic run or the next foreground refresh.
+  no backoff, for periodic and per-user work alike. Whatever is still queued waits for the next request, periodic run
+  or foreground refresh.
+- **Why `REPLACE` per user.** With `KEEP`, a write merged into an entry while that user's job is running would wait
+  for the periodic run. `REPLACE` cancels only the running job's wait: the send runs in the application scope and
+  completes, and the new job re-reads and sends whatever is left. One user's failing entry never stops
+  another user's job; replays share the repository's write lock, so a slow request delays the next one by at most its
+  20 s timeout.
 - **Shared logic.** `BackgroundUserSync` (`commonMain`) is the run itself. The Android `UserSyncWorker` and the iOS
   `IosBackgroundSyncRunner` only adapt the OS callback to it. `UserSyncScheduler` is a domain interface, and
   `platformUserSyncModule` is the only `expect`/`actual`, because WorkManager and `BGTaskScheduler` are unrelated OS
   facilities.
-- **Wiring.** `initKoin()` calls `schedulePeriodicSync()` on both platforms. On Android, the manifest removes the
+- **Wiring.** The repository takes the `UserSyncScheduler` from Koin. On iOS the scheduler resolves
+  `BackgroundUserSync` lazily, on its first background task, because `BackgroundUserSync` → repository → scheduler
+  would otherwise be a dependency cycle. `initKoin()` calls `schedulePeriodicSync()` on both platforms. On Android, the manifest removes the
   default WorkManager initializer and `SliideApplication` installs Koin's `workManagerFactory()`, so the worker gets
   its dependencies injected. On iOS, `Info.plist` lists the task id and the `fetch` background mode, and registration
   happens inside `iOSApp.init()`, before launch finishes.
@@ -473,7 +492,7 @@ untinted gap between the panes and a selection tint that matched one of the avat
 
 ### Example: UI polish
 
-The polish pass ([`openspec/changes/polish-users-ui`](./openspec/changes/polish-users-ui)) started as a list of UI
+The polish pass ([`openspec/changes/archive/2026-11-02-polish-users-ui`](./openspec/changes/archive/2026-11-02-polish-users-ui)) started as a list of UI
 complaints: a moving app bar, an empty tablet detail pane, a close icon on a screen that slides in, a small Save
 button, a two-button delete dialog, and composables scattered across packages. Before planning, Claude asked two
 questions whose answers changed the scope: should design-system components move too (no, feature only), and how big
@@ -509,11 +528,25 @@ doesn't drain `backgroundScope` work, so the iOS runner tests step with `runCurr
 showed that `adb shell cmd jobscheduler run -f` can't start periodic work early, because WorkManager skips a run that
 arrives before its period. The end-to-end check therefore waits for the real 30-minute period.
 
+### Example: per-user background sync
+
+The per-user sync ([`openspec/changes/sync-per-operation`](./openspec/changes/sync-per-operation)) came from asking
+where a failed write gets retried: the answer was "a periodic job scheduled at launch", which was hard to find from the
+repository and left an offline write waiting up to 30 minutes after the network came back. Claude drafted the
+proposal, delta specs, design and tasks with OpenSpec, then implemented them task by task.
+
+Two corrections came from implementation rather than planning. First, the draft also stopped a full replay on
+connection-level failures; while working on it, Claude found that the unarchived `typed-user-errors` change had
+deliberately chosen "carry on past every kept failure", with tests asserting it, so it paused and the stop rule was
+dropped instead of silently reversing that decision. Second, a draft scenario said a rejected single-user replay
+removes the temporary user, but the merged spec leaves the cache to the next refresh; the scenario was corrected to
+match. Wiring the scheduler into the repository also exposed an iOS-only Koin cycle, fixed by resolving the run lazily.
+
 ### Example: typed write errors
 
 The profile used to guess that every 422 meant "This email may already be in use", and the rule for what happens to a
 failed write was written four times in the repository on top of a yes/no `isRetryable` flag. The change
-([`openspec/changes/typed-user-errors`](./openspec/changes/typed-user-errors)) was explored with Claude against GoRest's
+([`openspec/changes/archive/2026-11-02-typed-user-errors`](./openspec/changes/archive/2026-11-02-typed-user-errors)) was explored with Claude against GoRest's
 own API notes: a 422 body names the field and the reason, a `DELETE` can be refused with 422 when too few seeded records
 remain, and GoRest resets its data every few hours, so a 404 on a cached id is routine.
 
