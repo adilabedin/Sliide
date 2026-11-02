@@ -123,6 +123,17 @@ class UsersScreenTest {
     }
 
     @Test
+    fun emptyStateOffersRetry() {
+        state.value = UsersState(content = FeedContent.Empty)
+        setContent()
+
+        composeRule.onNodeWithText("No users yet").assertIsDisplayed()
+        composeRule.onNodeWithText("Retry").assertIsDisplayed().performClick()
+
+        assertEquals(UsersAction.OnRetry, actions.single())
+    }
+
+    @Test
     fun undoOnTheSnackbarDispatchesUndoForThatUser() {
         state.value =
             UsersState(

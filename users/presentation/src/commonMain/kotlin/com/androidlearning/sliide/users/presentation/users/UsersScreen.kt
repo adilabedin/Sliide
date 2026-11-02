@@ -161,6 +161,8 @@ fun UsersScreen(
                     icon = Icons.Filled.Person,
                     title = stringResource(Res.string.users_empty_title),
                     body = stringResource(Res.string.users_empty_body),
+                    actionLabel = stringResource(Res.string.users_retry),
+                    onAction = { onAction(UsersAction.OnRetry) },
                     modifier = contentModifier,
                 )
 
