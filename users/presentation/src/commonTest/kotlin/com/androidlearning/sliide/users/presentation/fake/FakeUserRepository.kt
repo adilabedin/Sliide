@@ -16,7 +16,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
  * In-memory [UserRepository] for presentation tests.
  *
  * - The cache emits nothing until [emit] is called, so tests can observe the initial loading state.
- * - [removeUserLocally] / [restoreUser] / a failed [finalizeDelete] edit the emitted list like the real repository.
+ * - [removeUserLocally] / [restoreUser] edit the emitted list like the real repository. A failed [finalizeDelete]
+ *   leaves the user removed, as the real repository does until the next refresh.
  * - Every method records its calls; results are scripted through the `*Result` vars; a non-null `*Gate` suspends the
  *   call until the test completes it.
  */
@@ -76,9 +77,7 @@ class FakeUserRepository : UserRepository {
     override suspend fun finalizeDelete(user: User): Result<WriteStatus, DataError> {
         finalizedUsers += user
         finalizeGate?.await()
-        val result = finalizeResult
-        if (result is Result.Failure) emit((current + user).sortedByDescending { it.createdAt })
-        return result
+        return finalizeResult
     }
 
     override suspend fun syncPending(): Result<SyncReport, DataError.Remote> = syncResult

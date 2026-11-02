@@ -1,6 +1,5 @@
 package com.androidlearning.sliide.users.data.repository
 
-import app.cash.turbine.test
 import assertk.assertThat
 import assertk.assertions.containsExactly
 import assertk.assertions.isEmpty
@@ -47,7 +46,7 @@ class OfflineFirstUserRepositorySyncTest {
         }
 
     @Test
-    fun connectivityDropMidReplayStopsAndKeepsRemainingInOrder() =
+    fun connectivityDropKeepsThatEntryAndStillSendsTheRest() =
         runTest {
             val h = RepositoryHarness(backgroundScope)
             h.seedPending(h.seedUser(userEntity(1)), PendingOperation.UPDATE, queuedAt = 100)
@@ -59,8 +58,8 @@ class OfflineFirstUserRepositorySyncTest {
             val result = h.repository.syncPending()
 
             assertThat(result).isEqualTo(Result.Failure(DataError.Remote.NO_INTERNET))
-            assertThat(h.pendingSyncDao.entries.map { it.user.id }).containsExactly(2L, 3L)
-            assertThat(h.apiClient.requests.size).isEqualTo(2)
+            assertThat(h.pendingSyncDao.entries.map { it.user.id }).containsExactly(2L)
+            assertThat(h.apiClient.requests.size).isEqualTo(3)
         }
 
     @Test
@@ -112,31 +111,48 @@ class OfflineFirstUserRepositorySyncTest {
         }
 
     @Test
-    fun replayedCreateRejectedRemovesTempUserDropsEntryAndContinues() =
+    fun replayedCreateRejectedDropsEntryLeavesCacheAndContinues() =
         runTest {
             val h = RepositoryHarness(backgroundScope)
-            h.seedPending(h.seedUser(userEntity(-1, name = "Jane")), PendingOperation.CREATE, queuedAt = 100)
+            val temp = h.seedUser(userEntity(-1, name = "Jane"))
+            h.seedPending(temp, PendingOperation.CREATE, queuedAt = 100)
             h.seedPending(h.seedUser(userEntity(2)), PendingOperation.UPDATE, queuedAt = 200)
-            h.apiClient.createResults += Result.Failure(DataError.Remote.VALIDATION)
+            h.apiClient.createResults += Result.Failure(emailTaken)
 
             val result = h.repository.syncPending()
 
             assertThat(result).isEqualTo(Result.Success(SyncReport(synced = 1, rejected = 1)))
-            assertThat(h.userDao.getById(-1)).isNull()
+            assertThat(h.userDao.getById(-1)).isEqualTo(temp)
             assertThat(h.pendingSyncDao.entries).isEmpty()
             assertThat(h.apiClient.requests.size).isEqualTo(2)
         }
 
     @Test
-    fun replayedDeleteRejectedRestoresSnapshotAndDropsEntry() =
+    fun replayedDeleteRefusedDropsEntryAndLeavesCacheToRefresh() =
         runTest {
             val h = RepositoryHarness(backgroundScope)
-            val snapshot = userEntity(42)
-            h.seedPending(snapshot, PendingOperation.DELETE)
-            h.apiClient.deleteResults += Result.Failure(DataError.Remote.UNAUTHORIZED)
+            h.seedPending(userEntity(42), PendingOperation.DELETE)
+            h.apiClient.deleteResults += Result.Failure(DataError.Validation(emptyList()))
 
             assertThat(h.repository.syncPending()).isEqualTo(Result.Success(SyncReport(synced = 0, rejected = 1)))
-            assertThat(h.userDao.getById(42)).isEqualTo(snapshot)
+            assertThat(h.userDao.getById(42)).isNull()
+            assertThat(h.pendingSyncDao.entries).isEmpty()
+        }
+
+    @Test
+    fun refreshAfterRejectedSyncReplacesTheCacheWithTheServersList() =
+        runTest {
+            val h = RepositoryHarness(backgroundScope)
+            h.seedPending(h.seedUser(userEntity(-1, name = "Jane")), PendingOperation.CREATE, queuedAt = 100)
+            h.seedPending(userEntity(42), PendingOperation.DELETE, queuedAt = 200)
+            h.apiClient.createResults += Result.Failure(emailTaken)
+            h.apiClient.deleteResults += Result.Failure(DataError.Validation(emptyList()))
+            h.apiClient.defaultFetchLastPageResult = Result.Success(listOf(remoteUser(42)))
+
+            assertThat(h.repository.refresh()).isEqualTo(Result.Success(Unit))
+
+            // The rejected temp user is gone and the user whose delete was refused is back.
+            assertThat(h.userDao.users.map { it.id }).containsExactly(42L)
             assertThat(h.pendingSyncDao.entries).isEmpty()
         }
 
@@ -146,7 +162,7 @@ class OfflineFirstUserRepositorySyncTest {
             val h = RepositoryHarness(backgroundScope)
             val edited = h.seedUser(userEntity(42, name = "Edited"))
             h.seedPending(edited, PendingOperation.UPDATE)
-            h.apiClient.updateResults += Result.Failure(DataError.Remote.VALIDATION)
+            h.apiClient.updateResults += Result.Failure(emailTaken)
 
             assertThat(h.repository.syncPending()).isEqualTo(Result.Success(SyncReport(synced = 0, rejected = 1)))
             assertThat(h.userDao.getById(42)).isEqualTo(edited)
@@ -154,19 +170,20 @@ class OfflineFirstUserRepositorySyncTest {
         }
 
     @Test
-    fun replayedUpdateForUserThatNoLongerExistsRemovesUserAndEntry() =
+    fun replayedUpdateForUserThatNoLongerExistsDropsEntryAndLeavesCacheToRefresh() =
         runTest {
             val h = RepositoryHarness(backgroundScope)
-            h.seedPending(h.seedUser(userEntity(42, name = "Edited")), PendingOperation.UPDATE)
+            val edited = h.seedUser(userEntity(42, name = "Edited"))
+            h.seedPending(edited, PendingOperation.UPDATE)
             h.apiClient.updateResults += Result.Failure(DataError.Remote.NOT_FOUND)
 
             assertThat(h.repository.syncPending()).isEqualTo(Result.Success(SyncReport(synced = 0, rejected = 1)))
-            assertThat(h.userDao.getById(42)).isNull()
+            assertThat(h.userDao.getById(42)).isEqualTo(edited)
             assertThat(h.pendingSyncDao.entries).isEmpty()
         }
 
     @Test
-    fun rateLimitedReplayKeepsEntryAndStops() =
+    fun rateLimitedEntryIsKeptAndTheRestAreStillSent() =
         runTest {
             val h = RepositoryHarness(backgroundScope)
             h.seedPending(h.seedUser(userEntity(1)), PendingOperation.UPDATE, queuedAt = 100)
@@ -176,8 +193,41 @@ class OfflineFirstUserRepositorySyncTest {
             val result = h.repository.syncPending()
 
             assertThat(result).isEqualTo(Result.Failure(DataError.Remote.TOO_MANY_REQUESTS))
-            assertThat(h.pendingSyncDao.entries.map { it.user.id }).containsExactly(1L, 2L)
-            assertThat(h.apiClient.requests.size).isEqualTo(1)
+            assertThat(h.pendingSyncDao.entries.map { it.user.id }).containsExactly(1L)
+            assertThat(h.apiClient.requests.size).isEqualTo(2)
+        }
+
+    @Test
+    fun unauthorisedEntryIsKeptWithItsLocalDataAndTheRestAreStillSent() =
+        runTest {
+            val h = RepositoryHarness(backgroundScope)
+            val edited = h.seedUser(userEntity(1, name = "Edited"))
+            h.seedPending(edited, PendingOperation.UPDATE, queuedAt = 100)
+            h.seedPending(h.seedUser(userEntity(2)), PendingOperation.UPDATE, queuedAt = 200)
+            h.apiClient.updateResults += Result.Failure(DataError.Remote.UNAUTHORIZED)
+
+            val result = h.repository.syncPending()
+
+            assertThat(result).isEqualTo(Result.Failure(DataError.Remote.UNAUTHORIZED))
+            assertThat(h.pendingSyncDao.entries.map { it.user.id }).containsExactly(1L)
+            assertThat(h.userDao.getById(1)).isEqualTo(edited)
+            assertThat(h.apiClient.requests.size).isEqualTo(2)
+        }
+
+    @Test
+    fun replayedCreateWithUnexpectedStatusIsDroppedAndReplayContinues() =
+        runTest {
+            val h = RepositoryHarness(backgroundScope)
+            h.seedPending(h.seedUser(userEntity(-1, name = "Jane")), PendingOperation.CREATE, queuedAt = 100)
+            h.seedPending(h.seedUser(userEntity(2)), PendingOperation.UPDATE, queuedAt = 200)
+            h.apiClient.createResults += Result.Failure(DataError.Remote.UNKNOWN)
+
+            val result = h.repository.syncPending()
+
+            assertThat(result).isEqualTo(Result.Success(SyncReport(synced = 1, rejected = 1)))
+            assertThat(h.userDao.getById(-1)?.name).isEqualTo("Jane")
+            assertThat(h.pendingSyncDao.entries).isEmpty()
+            assertThat(h.apiClient.requests.size).isEqualTo(2)
         }
 
     @Test
@@ -185,29 +235,27 @@ class OfflineFirstUserRepositorySyncTest {
         runTest {
             val h = RepositoryHarness(backgroundScope)
             h.seedPending(h.seedUser(userEntity(-1, name = "Jane")), PendingOperation.CREATE)
-            h.apiClient.createResults += Result.Failure(DataError.Remote.VALIDATION)
+            h.apiClient.createResults += Result.Failure(emailTaken)
             h.repository.syncPending()
 
             val reopened = h.newRepository()
 
             assertThat(reopened.syncPending()).isEqualTo(Result.Success(SyncReport(synced = 0, rejected = 0)))
             assertThat(h.apiClient.requests.size).isEqualTo(1)
-            reopened.observeUsers().test { assertThat(awaitItem()).isEmpty() }
+            assertThat(h.pendingSyncDao.entries).isEmpty()
         }
 
     @Test
-    fun rejectionIsAtomicWithEntryRemovalAndRollback() =
+    fun rejectionOnlyDeletesTheEntry() =
         runTest {
             val h = RepositoryHarness(backgroundScope)
-            h.seedPending(h.seedUser(userEntity(-1)), PendingOperation.CREATE)
-            h.apiClient.createResults += Result.Failure(DataError.Remote.VALIDATION)
-            val transactionsBefore = h.transactionRunner.transactionCount
+            val temp = h.seedUser(userEntity(-1))
+            h.seedPending(temp, PendingOperation.CREATE)
+            h.apiClient.createResults += Result.Failure(emailTaken)
 
             h.repository.syncPending()
 
-            // One transaction: entry delete + temp-user rollback.
-            assertThat(h.transactionRunner.transactionCount - transactionsBefore).isEqualTo(1)
-            assertThat(h.userDao.users).isEmpty()
+            assertThat(h.userDao.users).containsExactly(temp)
             assertThat(h.pendingSyncDao.entries).isEmpty()
         }
 

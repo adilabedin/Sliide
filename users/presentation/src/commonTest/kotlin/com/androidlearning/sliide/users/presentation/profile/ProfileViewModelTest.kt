@@ -9,6 +9,7 @@ import assertk.assertions.isFalse
 import assertk.assertions.isNull
 import assertk.assertions.isTrue
 import com.androidlearning.sliide.core.domain.util.DataError
+import com.androidlearning.sliide.core.domain.util.FieldError
 import com.androidlearning.sliide.core.domain.util.Result
 import com.androidlearning.sliide.users.domain.model.Gender
 import com.androidlearning.sliide.users.domain.model.UserDetails
@@ -21,13 +22,14 @@ import com.androidlearning.sliide.users.presentation.fake.jane
 import com.androidlearning.sliide.users.presentation.fake.pendingAmelie
 import com.androidlearning.sliide.users.presentation.fake.rahul
 import com.androidlearning.sliide.users.presentation.generated.resources.Res
-import com.androidlearning.sliide.users.presentation.generated.resources.error_unauthorized
+import com.androidlearning.sliide.users.presentation.generated.resources.error_unknown
+import com.androidlearning.sliide.users.presentation.generated.resources.error_validation
 import com.androidlearning.sliide.users.presentation.generated.resources.profile_no_longer_available
 import com.androidlearning.sliide.users.presentation.generated.resources.profile_saved_offline
-import com.androidlearning.sliide.users.presentation.generated.resources.validation_email_in_use
 import com.androidlearning.sliide.users.presentation.generated.resources.validation_email_invalid
 import com.androidlearning.sliide.users.presentation.generated.resources.validation_name_required
 import com.androidlearning.sliide.users.presentation.generated.resources.validation_name_too_short
+import com.androidlearning.sliide.users.presentation.generated.resources.write_queued_auth_failed
 import com.androidlearning.sliide.users.presentation.util.RelativeTime
 import com.androidlearning.sliide.users.presentation.util.UiText
 import kotlinx.coroutines.CompletableDeferred
@@ -223,38 +225,105 @@ class ProfileViewModelTest {
         }
 
     @Test
-    fun serverValidationRejectionKeepsInputAndFlagsTheEmail() =
+    fun unauthorisedEditSaveReturnsToViewAndSaysItWillRetry() =
         runTest {
-            repository.updateResult = Result.Failure(DataError.Remote.VALIDATION)
-            val viewModel = editingJane()
-            viewModel.onAction(ProfileAction.OnEmailChange("taken@example.com"))
-
-            viewModel.onAction(ProfileAction.OnSaveClick)
-
-            val state = viewModel.state.value
-            assertThat(state.mode).isEqualTo(ProfileMode.EDIT)
-            assertThat(state.form.email).isEqualTo("taken@example.com")
-            assertThat(state.emailError).isEqualTo(text(Res.string.validation_email_in_use))
-            assertThat(state.canSave).isFalse()
-
-            viewModel.onAction(ProfileAction.OnEmailChange("free@example.com"))
-            assertThat(viewModel.state.value.emailError).isNull()
-            assertThat(viewModel.state.value.canSave).isTrue()
-        }
-
-    @Test
-    fun unauthorisedSaveKeepsEditingAndShowsMessage() =
-        runTest {
-            repository.updateResult = Result.Failure(DataError.Remote.UNAUTHORIZED)
+            repository.updateResult = Result.Success(WriteStatus.QUEUED_AUTH_FAILED)
             val viewModel = editingJane()
             viewModel.events.test {
                 viewModel.onAction(ProfileAction.OnNameChange("Jane Smith"))
                 viewModel.onAction(ProfileAction.OnSaveClick)
 
-                assertThat(awaitItem()).isEqualTo(ProfileEvent.ShowMessage(text(Res.string.error_unauthorized)))
+                assertThat(awaitItem()).isEqualTo(ProfileEvent.ShowMessage(text(Res.string.write_queued_auth_failed)))
+                assertThat(viewModel.state.value.mode).isEqualTo(ProfileMode.VIEW)
+                assertThat(viewModel.state.value.form.name).isEqualTo("Jane Smith")
+            }
+        }
+
+    @Test
+    fun takenEmailKeepsInputAndShowsTheServerMessage() =
+        runTest {
+            repository.updateResult =
+                Result.Failure(DataError.Validation(listOf(FieldError("email", "has already been taken"))))
+            val viewModel = editingJane()
+            viewModel.events.test {
+                viewModel.onAction(ProfileAction.OnEmailChange("taken@example.com"))
+                viewModel.onAction(ProfileAction.OnSaveClick)
+
+                assertThat(awaitItem()).isEqualTo(ProfileEvent.ShowMessage(UiText.Dynamic("Email has already been taken")))
+                val state = viewModel.state.value
+                assertThat(state.mode).isEqualTo(ProfileMode.EDIT)
+                assertThat(state.form.email).isEqualTo("taken@example.com")
+                assertThat(state.isSaving).isFalse()
+                // The email field only shows local validation; the server's message is in the snackbar.
+                assertThat(state.emailError).isNull()
+                assertThat(state.canSave).isTrue()
+            }
+        }
+
+    @Test
+    fun severalFieldErrorsAreShownInOneSnackbar() =
+        runTest {
+            repository.updateResult =
+                Result.Failure(
+                    DataError.Validation(listOf(FieldError("email", "has already been taken"), FieldError("name", "can't be blank"))),
+                )
+            val viewModel = editingJane()
+            viewModel.events.test {
+                viewModel.onAction(ProfileAction.OnNameChange("Jane Smith"))
+                viewModel.onAction(ProfileAction.OnSaveClick)
+
+                assertThat(awaitItem())
+                    .isEqualTo(ProfileEvent.ShowMessage(UiText.Dynamic("Email has already been taken\nName can't be blank")))
+                assertThat(viewModel.state.value.mode).isEqualTo(ProfileMode.EDIT)
+                assertThat(viewModel.state.value.form.name).isEqualTo("Jane Smith")
+            }
+        }
+
+    @Test
+    fun rejectionNamingNoFieldSaysTheDetailsWereRejected() =
+        runTest {
+            repository.updateResult = Result.Failure(DataError.Validation(emptyList()))
+            val viewModel = editingJane()
+            viewModel.events.test {
+                viewModel.onAction(ProfileAction.OnNameChange("Jane Smith"))
+                viewModel.onAction(ProfileAction.OnSaveClick)
+
+                assertThat(awaitItem()).isEqualTo(ProfileEvent.ShowMessage(text(Res.string.error_validation)))
+                assertThat(viewModel.state.value.mode).isEqualTo(ProfileMode.EDIT)
+                assertThat(viewModel.state.value.form.name).isEqualTo("Jane Smith")
+            }
+        }
+
+    @Test
+    fun unexpectedFailureKeepsEditingAndShowsMessage() =
+        runTest {
+            repository.updateResult = Result.Failure(DataError.Remote.UNKNOWN)
+            val viewModel = editingJane()
+            viewModel.events.test {
+                viewModel.onAction(ProfileAction.OnNameChange("Jane Smith"))
+                viewModel.onAction(ProfileAction.OnSaveClick)
+
+                assertThat(awaitItem()).isEqualTo(ProfileEvent.ShowMessage(text(Res.string.error_unknown)))
                 assertThat(viewModel.state.value.mode).isEqualTo(ProfileMode.EDIT)
                 assertThat(viewModel.state.value.form.name).isEqualTo("Jane Smith")
                 assertThat(viewModel.state.value.canSave).isTrue()
+            }
+        }
+
+    @Test
+    fun rejectedCreateKeepsTheFormOpenWithTheInput() =
+        runTest {
+            repository.createResult = Result.Failure(DataError.Validation(listOf(FieldError("email", "has already been taken"))))
+            val viewModel = viewModel()
+            viewModel.onAction(ProfileAction.OnOpen(ProfileKey.CREATE))
+            viewModel.events.test {
+                viewModel.onAction(ProfileAction.OnNameChange("Ada Lovelace"))
+                viewModel.onAction(ProfileAction.OnEmailChange("taken@example.com"))
+                viewModel.onAction(ProfileAction.OnSaveClick)
+
+                assertThat(awaitItem()).isEqualTo(ProfileEvent.ShowMessage(UiText.Dynamic("Email has already been taken")))
+                assertThat(viewModel.state.value.mode).isEqualTo(ProfileMode.CREATE)
+                assertThat(viewModel.state.value.form.email).isEqualTo("taken@example.com")
             }
         }
 
@@ -321,6 +390,21 @@ class ProfileViewModelTest {
                 viewModel.onAction(ProfileAction.OnSaveClick)
 
                 assertThat(awaitItem()).isEqualTo(ProfileEvent.Created(text(Res.string.profile_saved_offline)))
+            }
+        }
+
+    @Test
+    fun unauthorisedCreateClosesSayingItWillRetry() =
+        runTest {
+            repository.createResult = Result.Success(WriteStatus.QUEUED_AUTH_FAILED)
+            val viewModel = viewModel()
+            viewModel.onAction(ProfileAction.OnOpen(ProfileKey.CREATE))
+            viewModel.events.test {
+                viewModel.onAction(ProfileAction.OnNameChange("Ada Lovelace"))
+                viewModel.onAction(ProfileAction.OnEmailChange("ada@example.com"))
+                viewModel.onAction(ProfileAction.OnSaveClick)
+
+                assertThat(awaitItem()).isEqualTo(ProfileEvent.Created(text(Res.string.write_queued_auth_failed)))
             }
         }
 

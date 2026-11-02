@@ -6,6 +6,7 @@ import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import com.androidlearning.sliide.core.data.networking.HttpClientFactory
 import com.androidlearning.sliide.core.domain.util.DataError
+import com.androidlearning.sliide.core.domain.util.FieldError
 import com.androidlearning.sliide.core.domain.util.Result
 import com.androidlearning.sliide.users.domain.model.Gender
 import com.androidlearning.sliide.users.domain.model.RemoteUser
@@ -146,12 +147,84 @@ class KtorUserApiClientTest {
         }
 
     @Test
-    fun createWithTakenEmailIsValidationError() =
+    fun createWithTakenEmailIsValidationWithTheField() =
         runTest {
             val api =
                 apiWith { respondJson("""[{"field":"email","message":"has already been taken"}]""", HttpStatusCode.UnprocessableEntity) }
 
-            assertThat(api.client.create(jane)).isEqualTo(Result.Failure(DataError.Remote.VALIDATION))
+            assertThat(api.client.create(jane))
+                .isEqualTo(Result.Failure(DataError.Validation(listOf(FieldError("email", "has already been taken")))))
+        }
+
+    @Test
+    fun updateWithSeveralFieldErrorsKeepsThemInOrder() =
+        runTest {
+            val api =
+                apiWith {
+                    respondJson(
+                        """[{"field":"email","message":"is invalid"},{"field":"name","message":"can't be blank"}]""",
+                        HttpStatusCode.UnprocessableEntity,
+                    )
+                }
+
+            assertThat(api.client.update(42, jane)).isEqualTo(
+                Result.Failure(DataError.Validation(listOf(FieldError("email", "is invalid"), FieldError("name", "can't be blank")))),
+            )
+        }
+
+    @Test
+    fun createWithEmpty422BodyIsValidationWithNoFields() =
+        runTest {
+            val api = apiWith { respond("", HttpStatusCode.UnprocessableEntity) }
+
+            assertThat(api.client.create(jane)).isEqualTo(Result.Failure(DataError.Validation(emptyList())))
+        }
+
+    @Test
+    fun deleteAnswered422IsValidation() =
+        runTest {
+            val api = apiWith { respondJson("""[{"field":"id","message":"cannot be deleted"}]""", HttpStatusCode.UnprocessableEntity) }
+
+            assertThat(api.client.delete(42))
+                .isEqualTo(Result.Failure(DataError.Validation(listOf(FieldError("id", "cannot be deleted")))))
+        }
+
+    @Test
+    fun updatingMissingUserIsNotFound() =
+        runTest {
+            val api = apiWith { respondJson("""{"message":"Resource not found"}""", HttpStatusCode.NotFound) }
+
+            assertThat(api.client.update(42, jane)).isEqualTo(Result.Failure(DataError.Remote.NOT_FOUND))
+        }
+
+    @Test
+    fun unauthorisedWritesAreUnauthorized() =
+        runTest {
+            val api = apiWith { respondJson("""{"message":"Authentication failed"}""", HttpStatusCode.Unauthorized) }
+            val expected = Result.Failure(DataError.Remote.UNAUTHORIZED)
+
+            assertThat(api.client.create(jane)).isEqualTo(expected)
+            assertThat(api.client.update(42, jane)).isEqualTo(expected)
+            assertThat(api.client.delete(42)).isEqualTo(expected)
+        }
+
+    @Test
+    fun unavailableWritesAreServerError() =
+        runTest {
+            val api = apiWith { respond("", HttpStatusCode.ServiceUnavailable) }
+            val expected = Result.Failure(DataError.Remote.SERVER_ERROR)
+
+            assertThat(api.client.create(jane)).isEqualTo(expected)
+            assertThat(api.client.update(42, jane)).isEqualTo(expected)
+            assertThat(api.client.delete(42)).isEqualTo(expected)
+        }
+
+    @Test
+    fun offlineDeleteIsNoInternet() =
+        runTest {
+            val api = apiWith { throw IOException("offline") }
+
+            assertThat(api.client.delete(42)).isEqualTo(Result.Failure(DataError.Remote.NO_INTERNET))
         }
 
     @Test

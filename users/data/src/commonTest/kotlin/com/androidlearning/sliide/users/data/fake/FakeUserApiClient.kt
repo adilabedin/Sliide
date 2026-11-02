@@ -39,14 +39,14 @@ class FakeUserApiClient : UserApiClient {
     val requests: List<RemoteRequest> get() = recorded.toList()
 
     val fetchLastPageResults = ArrayDeque<Result<List<RemoteUser>, DataError.Remote>>()
-    val createResults = ArrayDeque<Result<RemoteUser, DataError.Remote>>()
-    val updateResults = ArrayDeque<Result<RemoteUser, DataError.Remote>>()
-    val deleteResults = ArrayDeque<EmptyResult<DataError.Remote>>()
+    val createResults = ArrayDeque<Result<RemoteUser, DataError>>()
+    val updateResults = ArrayDeque<Result<RemoteUser, DataError>>()
+    val deleteResults = ArrayDeque<EmptyResult<DataError>>()
 
     var defaultFetchLastPageResult: Result<List<RemoteUser>, DataError.Remote> = Result.Success(emptyList())
 
     /** When non-null, overrides the echo behaviour for every create/update/delete without a queued result. */
-    var defaultError: DataError.Remote? = null
+    var defaultError: DataError? = null
 
     var nextServerId = 1_000L
 
@@ -63,7 +63,7 @@ class FakeUserApiClient : UserApiClient {
         return fetchLastPageResults.removeFirstOrNull() ?: defaultFetchLastPageResult
     }
 
-    override suspend fun create(details: UserDetails): Result<RemoteUser, DataError.Remote> {
+    override suspend fun create(details: UserDetails): Result<RemoteUser, DataError> {
         record(RemoteRequest.Create(details))
         createThrows?.let { throw it }
         return createResults.removeFirstOrNull()
@@ -74,14 +74,14 @@ class FakeUserApiClient : UserApiClient {
     override suspend fun update(
         id: Long,
         details: UserDetails,
-    ): Result<RemoteUser, DataError.Remote> {
+    ): Result<RemoteUser, DataError> {
         record(RemoteRequest.Update(id, details))
         return updateResults.removeFirstOrNull()
             ?: defaultError?.let { Result.Failure(it) }
             ?: Result.Success(RemoteUser(id = id, details = details))
     }
 
-    override suspend fun delete(id: Long): EmptyResult<DataError.Remote> {
+    override suspend fun delete(id: Long): EmptyResult<DataError> {
         record(RemoteRequest.Delete(id))
         return deleteResults.removeFirstOrNull()
             ?: defaultError?.let { Result.Failure(it) }

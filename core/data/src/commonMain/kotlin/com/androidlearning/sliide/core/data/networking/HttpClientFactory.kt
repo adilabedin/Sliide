@@ -25,6 +25,13 @@ object HttpClientFactory {
     const val CONNECT_TIMEOUT_MILLIS = 10_000L
     const val SOCKET_TIMEOUT_MILLIS = 20_000L
 
+    /** The JSON configuration the client decodes with; reuse it to parse error bodies the same way. */
+    val json: Json =
+        Json {
+            ignoreUnknownKeys = true
+            explicitNulls = false
+        }
+
     fun create(
         engine: HttpClientEngine,
         baseUrl: String = BuildKonfig.BASE_URL,
@@ -33,12 +40,7 @@ object HttpClientFactory {
         HttpClient(engine) {
             expectSuccess = false
             install(ContentNegotiation) {
-                json(
-                    Json {
-                        ignoreUnknownKeys = true
-                        explicitNulls = false
-                    },
-                )
+                json(json)
             }
             install(HttpTimeout) {
                 requestTimeoutMillis = REQUEST_TIMEOUT_MILLIS

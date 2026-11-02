@@ -9,11 +9,12 @@ import com.androidlearning.sliide.core.database.UserEntity
 import com.androidlearning.sliide.core.domain.util.DataError
 import com.androidlearning.sliide.core.domain.util.EmptyResult
 import com.androidlearning.sliide.core.domain.util.Result
-import com.androidlearning.sliide.core.domain.util.isRetryable
 import com.androidlearning.sliide.users.data.mapper.toPendingSync
 import com.androidlearning.sliide.users.data.mapper.toUser
 import com.androidlearning.sliide.users.data.mapper.toUserDetails
 import com.androidlearning.sliide.users.data.mapper.toUserEntity
+import com.androidlearning.sliide.users.data.sync.OutboxDecision
+import com.androidlearning.sliide.users.data.sync.OutboxPolicy
 import com.androidlearning.sliide.users.data.sync.PendingSyncMerger
 import com.androidlearning.sliide.users.domain.UserApiClient
 import com.androidlearning.sliide.users.domain.UserRepository
@@ -33,7 +34,12 @@ import kotlin.time.Clock
 
 /**
  * Offline-first [UserRepository]: Room is the single source of truth, every write lands there first, and writes
- * that fail for a retryable reason wait in the `pending_sync` outbox until [syncPending] replays them.
+ * that fail in a way that may later succeed wait in the `pending_sync` outbox until [syncPending] replays them.
+ *
+ * Failure handling (design D4): [OutboxPolicy] alone decides, from the operation and the [DataError], whether a failed
+ * write is kept, rejected or already gone. A rejected write only loses its pending entry; the next [refresh] replaces
+ * the cache with the server's list. The one exception is a rejected direct create, whose temp user is removed at once
+ * because the form stays open for a corrected resubmit.
  *
  * Concurrency (design D5/D7):
  * - [writeMutex] is held for each user write (local step plus one HTTP call) and for each replayed entry, never for
@@ -79,32 +85,29 @@ class OfflineFirstUserRepository(
         outlivingCaller {
             writeMutex.withLock {
                 val now = nowMillis()
-                // The temp row and its pending CREATE are written together, so a crash mid-call never loses the create.
-                val tempEntity =
-                    transactionRunner.inTransaction {
-                        val tempId = minOf(userDao.nextTempId(), lastIssuedTempId - 1)
-                        lastIssuedTempId = tempId
-                        val entity = details.toUserEntity(id = tempId, createdAtEpochMillis = now)
-                        userDao.upsert(entity)
-                        pendingSyncDao.upsert(entity.toPendingSync(PendingOperation.CREATE, queuedAtEpochMillis = now))
-                        entity
-                    }
+                val tempId = minOf(userDao.nextTempId(), lastIssuedTempId - 1)
+                lastIssuedTempId = tempId
+                val tempEntity = details.toUserEntity(id = tempId, createdAtEpochMillis = now)
+                userDao.upsert(tempEntity)
+                // Only a failed request queues a write. If the app dies mid-request the write is lost and the next
+                // refresh shows the server's data (here: removes the temp user); accepted as too rare to cover.
                 when (val result = apiClient.create(details)) {
                     is Result.Success -> {
                         rekey(tempEntity, result.data)
                         Result.Success(WriteStatus.SYNCED)
                     }
-                    is Result.Failure -> {
-                        if (result.error.isRetryable) {
-                            Result.Success(WriteStatus.QUEUED)
-                        } else {
-                            transactionRunner.inTransaction {
-                                userDao.deleteById(tempEntity.id)
-                                pendingSyncDao.deleteByUserId(tempEntity.id)
+                    is Result.Failure ->
+                        when (OutboxPolicy.decide(PendingOperation.CREATE, result.error)) {
+                            OutboxDecision.KEEP -> {
+                                pendingSyncDao.upsert(tempEntity.toPendingSync(PendingOperation.CREATE, queuedAtEpochMillis = now))
+                                Result.Success(queuedStatus(result.error))
                             }
-                            Result.Failure(result.error)
+                            // GONE is never decided for a create; like a rejection, the temp user goes.
+                            OutboxDecision.REJECT, OutboxDecision.GONE -> {
+                                userDao.deleteById(tempEntity.id)
+                                Result.Failure(result.error)
+                            }
                         }
-                    }
                 }
             }
         }
@@ -118,16 +121,16 @@ class OfflineFirstUserRepository(
 
                 if (user.id < 0) {
                     // Never-synced user: no API call, the change folds into its pending CREATE (spec: offline-sync).
+                    // A temp user with no pending CREATE (its POST was cut off by a killed process) is only edited locally.
                     transactionRunner.inTransaction {
                         userDao.upsert(updated)
-                        enqueue(updated, PendingOperation.UPDATE)
+                        if (pendingSyncDao.getByUserId(user.id) != null) enqueue(updated, PendingOperation.UPDATE)
                     }
                     return@withLock Result.Success(WriteStatus.QUEUED)
                 }
 
-                // Outbox first: the local edit and its merged pending UPDATE commit together before the request, so a
-                // cancelled caller or a process death mid-request leaves the edit queued instead of silently unprotected.
-                val previousPending = applyLocallyAndEnqueue(updated, PendingOperation.UPDATE) { userDao.upsert(updated) }
+                // Only a failed request queues the edit (see [createUser]); the cache shows it straight away.
+                userDao.upsert(updated)
                 when (val result = apiClient.update(user.id, updated.toUserDetails())) {
                     is Result.Success -> {
                         transactionRunner.inTransaction {
@@ -137,26 +140,26 @@ class OfflineFirstUserRepository(
                         }
                         Result.Success(WriteStatus.SYNCED)
                     }
-                    is Result.Failure -> {
-                        when {
-                            result.error.isRetryable -> Result.Success(WriteStatus.QUEUED)
+                    is Result.Failure ->
+                        when (OutboxPolicy.decide(PendingOperation.UPDATE, result.error)) {
+                            OutboxDecision.KEEP -> {
+                                transactionRunner.inTransaction { enqueue(updated, PendingOperation.UPDATE) }
+                                Result.Success(queuedStatus(result.error))
+                            }
                             // The user no longer exists on the server: drop it locally together with any pending entry.
-                            result.error == DataError.Remote.NOT_FOUND -> {
+                            OutboxDecision.GONE -> {
                                 transactionRunner.inTransaction {
                                     userDao.deleteById(user.id)
                                     pendingSyncDao.deleteByUserId(user.id)
                                 }
-                                Result.Failure(result.error)
+                                Result.Failure(DataError.Remote.NOT_FOUND)
                             }
-                            else -> {
-                                transactionRunner.inTransaction {
-                                    userDao.upsert(previous)
-                                    restorePending(user.id, previousPending)
-                                }
+                            // Not rolled back: any older pending entry goes, and the next refresh restores the server's data.
+                            OutboxDecision.REJECT -> {
+                                pendingSyncDao.deleteByUserId(user.id)
                                 Result.Failure(result.error)
                             }
                         }
-                    }
                 }
             }
         }
@@ -183,8 +186,6 @@ class OfflineFirstUserRepository(
     override suspend fun finalizeDelete(user: User): Result<WriteStatus, DataError> =
         outlivingCaller {
             writeMutex.withLock {
-                val snapshot = user.toUserEntity()
-
                 if (user.id < 0) {
                     // Never-synced user: cancel its pending CREATE; the server never hears about it.
                     transactionRunner.inTransaction {
@@ -195,25 +196,30 @@ class OfflineFirstUserRepository(
                     return@withLock Result.Success(WriteStatus.SYNCED)
                 }
 
-                // Outbox first: the pending DELETE commits before the request and before the Undo-window guard is lifted
-                // (both under writeMutex, so replay can't run in between), so the delete is always protected by one of them.
-                val previousPending = applyLocallyAndEnqueue(snapshot, PendingOperation.DELETE) { userDao.deleteById(user.id) }
+                // Only a failed request queues the delete (see [createUser]). The Undo-window guard can be lifted now:
+                // writeMutex is held until the request finishes, so replay can't send an older entry for this user meanwhile.
+                userDao.deleteById(user.id)
                 awaitingFinalize -= user.id
 
-                val result = apiClient.delete(user.id)
-                when {
-                    result is Result.Success || (result is Result.Failure && result.error == DataError.Remote.NOT_FOUND) -> {
-                        // Already gone on the server counts as success; the queued DELETE (and anything older) is done.
+                val decision =
+                    when (val result = apiClient.delete(user.id)) {
+                        is Result.Success -> null
+                        is Result.Failure -> OutboxPolicy.decide(PendingOperation.DELETE, result.error) to result.error
+                    }
+                when (decision?.first) {
+                    // Deleted, or already gone on the server: the queued DELETE (and anything older) is done.
+                    null, OutboxDecision.GONE -> {
                         pendingSyncDao.deleteByUserId(user.id)
                         Result.Success(WriteStatus.SYNCED)
                     }
-                    result is Result.Failure && result.error.isRetryable -> Result.Success(WriteStatus.QUEUED)
-                    else -> {
-                        transactionRunner.inTransaction {
-                            userDao.upsert(snapshot)
-                            restorePending(user.id, previousPending)
-                        }
-                        Result.Failure((result as Result.Failure).error)
+                    OutboxDecision.KEEP -> {
+                        transactionRunner.inTransaction { enqueue(user.toUserEntity(), PendingOperation.DELETE) }
+                        Result.Success(queuedStatus(decision.second))
+                    }
+                    // Not rolled back: any older pending entry goes, and the next refresh brings the user back.
+                    OutboxDecision.REJECT -> {
+                        pendingSyncDao.deleteByUserId(user.id)
+                        Result.Failure(decision.second)
                     }
                 }
             }
@@ -227,7 +233,7 @@ class OfflineFirstUserRepository(
         val pass =
             syncStateMutex.withLock {
                 inFlightSync?.takeIf { it.isActive }
-                    ?: applicationScope.async { replayQueue() }.also { inFlightSync = it }
+                    ?: applicationScope.async { sendQueuedWrites() }.also { inFlightSync = it }
             }
         return pass.await()
     }
@@ -262,74 +268,72 @@ class OfflineFirstUserRepository(
      */
     private suspend fun <T> outlivingCaller(block: suspend () -> T): T = applicationScope.async { block() }.await()
 
-    private suspend fun replayQueue(): Result<SyncReport, DataError.Remote> {
+    /**
+     * Sends every queued entry once, oldest first, one at a time under [writeMutex] (design D4). A success clears the
+     * entry; a failure [OutboxPolicy] keeps leaves it queued for the next sync and the pass carries on; any other failure
+     * only deletes the entry. Returns the first kept error, if any. Sync never rolls the cached users back: the next
+     * [refresh] replaces the list with the server's.
+     */
+    private suspend fun sendQueuedWrites(): Result<SyncReport, DataError.Remote> {
         var synced = 0
         var rejected = 0
+        var firstKeptError: DataError.Remote? = null
         for ((user) in pendingSyncDao.getAllOrdered()) {
-            val outcome =
-                writeMutex.withLock {
-                    // Re-read under the lock: a user write may have merged into or removed this entry meanwhile.
-                    val entry = pendingSyncDao.getByUserId(user.id) ?: return@withLock ReplayOutcome.Gone
-                    if (entry.user.id in awaitingFinalize) return@withLock ReplayOutcome.Skipped
-                    replay(entry)
-                }
-            when (outcome) {
-                ReplayOutcome.Synced -> synced++
-                ReplayOutcome.Rejected -> rejected++
-                ReplayOutcome.Skipped, ReplayOutcome.Gone -> Unit
-                is ReplayOutcome.Retry -> return Result.Failure(outcome.error)
-            }
-        }
-        return Result.Success(SyncReport(synced = synced, rejected = rejected))
-    }
-
-    private suspend fun replay(entry: PendingSyncEntity): ReplayOutcome {
-        val userId = entry.user.id
-        val result: Result<RemoteUser?, DataError.Remote> =
-            when (entry.operation) {
-                PendingOperation.CREATE -> apiClient.create(entry.user.toUserDetails())
-                PendingOperation.UPDATE -> apiClient.update(userId, entry.user.toUserDetails())
-                PendingOperation.DELETE ->
-                    when (val deleted = apiClient.delete(userId)) {
-                        is Result.Success -> Result.Success(null)
-                        is Result.Failure ->
-                            if (deleted.error == DataError.Remote.NOT_FOUND) Result.Success(null) else deleted
+            writeMutex.withLock {
+                // Re-read under the lock: a user write may have merged into or removed this entry meanwhile.
+                val entry = pendingSyncDao.getByUserId(user.id) ?: return@withLock
+                // Inside its Undo window: left queued until it is finalised or undone.
+                if (entry.user.id in awaitingFinalize) return@withLock
+                when (val result = send(entry)) {
+                    is Result.Success -> {
+                        clearSynced(entry, result.data)
+                        synced++
                     }
-            }
-
-        return when (result) {
-            is Result.Success -> {
-                val serverUser = result.data
-                when (entry.operation) {
-                    PendingOperation.CREATE if serverUser != null -> rekey(entry.user, serverUser)
-                    PendingOperation.UPDATE if serverUser != null ->
-                        transactionRunner.inTransaction {
-                            userDao.getById(userId)?.let { userDao.upsert(serverUser.toUserEntity(it.createdAtEpochMillis)) }
-                            pendingSyncDao.deleteByUserId(userId)
+                    is Result.Failure -> {
+                        val decision = OutboxPolicy.decide(entry.operation, result.error)
+                        if (decision == OutboxDecision.KEEP) {
+                            // KEEP is only decided for remote errors; the fallback keeps the type total.
+                            if (firstKeptError == null) firstKeptError = result.error as? DataError.Remote ?: DataError.Remote.UNKNOWN
+                            return@withLock
                         }
-
-                    else -> pendingSyncDao.deleteByUserId(userId)
-                }
-                ReplayOutcome.Synced
-            }
-            is Result.Failure -> {
-                if (result.error.isRetryable) return ReplayOutcome.Retry(result.error)
-                transactionRunner.inTransaction {
-                    pendingSyncDao.deleteByUserId(userId)
-                    when (entry.operation) {
-                        PendingOperation.CREATE -> userDao.deleteById(userId)
-                        PendingOperation.DELETE -> userDao.upsert(entry.user)
-                        PendingOperation.UPDATE ->
-                            // NOT_FOUND: the user no longer exists on the server, so drop it locally. Any other
-                            // rejection keeps the local edit; the server's last state isn't stored, so the next
-                            // refresh corrects it.
-                            if (result.error == DataError.Remote.NOT_FOUND) userDao.deleteById(userId) else Unit
+                        pendingSyncDao.deleteByUserId(entry.user.id)
+                        // A delete of a user already gone on the server is done; everything else was rejected.
+                        if (decision == OutboxDecision.GONE && entry.operation == PendingOperation.DELETE) synced++ else rejected++
                     }
                 }
-                ReplayOutcome.Rejected
             }
         }
+        return firstKeptError?.let { Result.Failure(it) } ?: Result.Success(SyncReport(synced = synced, rejected = rejected))
     }
+
+    /** Sends one queued entry. A successful create or update returns the server's user; a delete returns null. */
+    private suspend fun send(entry: PendingSyncEntity): Result<RemoteUser?, DataError> =
+        when (entry.operation) {
+            PendingOperation.CREATE -> apiClient.create(entry.user.toUserDetails())
+            PendingOperation.UPDATE -> apiClient.update(entry.user.id, entry.user.toUserDetails())
+            PendingOperation.DELETE -> apiClient.delete(entry.user.id).let { if (it is Result.Failure) it else Result.Success(null) }
+        }
+
+    /** Clears a sent entry; a created user is re-keyed to its server id and an updated one takes the server's data. */
+    private suspend fun clearSynced(
+        entry: PendingSyncEntity,
+        serverUser: RemoteUser?,
+    ) {
+        val userId = entry.user.id
+        when {
+            entry.operation == PendingOperation.CREATE && serverUser != null -> rekey(entry.user, serverUser)
+            entry.operation == PendingOperation.UPDATE && serverUser != null ->
+                transactionRunner.inTransaction {
+                    userDao.getById(userId)?.let { userDao.upsert(serverUser.toUserEntity(it.createdAtEpochMillis)) }
+                    pendingSyncDao.deleteByUserId(userId)
+                }
+            else -> pendingSyncDao.deleteByUserId(userId)
+        }
+    }
+
+    /** A kept write's status: an authentication failure is reported separately so the UI can say why (design D6). */
+    private fun queuedStatus(error: DataError): WriteStatus =
+        if (error == DataError.Remote.UNAUTHORIZED) WriteStatus.QUEUED_AUTH_FAILED else WriteStatus.QUEUED
 
     /** Swaps a temp-id user for the server's user in one transaction and clears its pending CREATE. */
     private suspend fun rekey(
@@ -342,30 +346,6 @@ class OfflineFirstUserRepository(
             userDao.upsert(serverUser.toUserEntity(createdAt))
             pendingSyncDao.deleteByUserId(temp.id)
         }
-    }
-
-    /**
-     * In one transaction: runs [applyLocally] and merges [operation] for [user] into the outbox. Returns the pending
-     * entry as it was before, so a permanent failure can restore it exactly with [restorePending].
-     */
-    private suspend fun applyLocallyAndEnqueue(
-        user: UserEntity,
-        operation: PendingOperation,
-        applyLocally: suspend () -> Unit,
-    ): PendingSyncEntity? =
-        transactionRunner.inTransaction {
-            val previousPending = pendingSyncDao.getByUserId(user.id)
-            applyLocally()
-            enqueue(user, operation)
-            previousPending
-        }
-
-    /** Puts the user's pending entry back to [previous], or removes it if there was none. Run inside a transaction. */
-    private suspend fun restorePending(
-        userId: Long,
-        previous: PendingSyncEntity?,
-    ) {
-        if (previous == null) pendingSyncDao.deleteByUserId(userId) else pendingSyncDao.upsert(previous)
     }
 
     /** Merges a write into the user's pending entry (D2). Must run inside a transaction. */
@@ -390,18 +370,4 @@ class OfflineFirstUserRepository(
     }
 
     private fun nowMillis(): Long = clock.now().toEpochMilliseconds()
-
-    private sealed interface ReplayOutcome {
-        data object Synced : ReplayOutcome
-
-        data object Rejected : ReplayOutcome
-
-        data object Skipped : ReplayOutcome
-
-        data object Gone : ReplayOutcome
-
-        data class Retry(
-            val error: DataError.Remote,
-        ) : ReplayOutcome
-    }
 }

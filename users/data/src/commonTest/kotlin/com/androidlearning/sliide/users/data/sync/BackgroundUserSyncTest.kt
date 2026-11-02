@@ -15,6 +15,7 @@ import com.androidlearning.sliide.core.domain.util.Result
 import com.androidlearning.sliide.users.data.fake.RemoteRequest
 import com.androidlearning.sliide.users.data.repository.RepositoryHarness
 import com.androidlearning.sliide.users.data.repository.details
+import com.androidlearning.sliide.users.data.repository.emailTaken
 import com.androidlearning.sliide.users.data.repository.remoteUser
 import com.androidlearning.sliide.users.data.repository.userEntity
 import com.androidlearning.sliide.users.domain.UserRepository
@@ -77,13 +78,14 @@ class BackgroundUserSyncTest {
             h.seedPending(userEntity(-1), PendingOperation.CREATE, queuedAt = 100)
             h.seedUser(userEntity(-1))
             h.seedPending(h.seedUser(userEntity(2)), PendingOperation.UPDATE, queuedAt = 200)
-            h.apiClient.createResults += Result.Failure(DataError.Remote.VALIDATION)
+            h.apiClient.createResults += Result.Failure(emailTaken)
 
             val outcome = BackgroundUserSync(h.repository).run()
 
             assertThat(outcome).isEqualTo(BackgroundSyncOutcome.Synced(SyncReport(synced = 1, rejected = 1)))
             assertThat(h.pendingSyncDao.entries).isEmpty()
-            assertThat(h.userDao.users.map { it.id }).containsExactly(2L)
+            // The cache is left to the next foreground refresh; a background run never replaces it.
+            assertThat(h.userDao.users.map { it.id }).containsExactlyInAnyOrder(-1L, 2L)
         }
 
     @Test

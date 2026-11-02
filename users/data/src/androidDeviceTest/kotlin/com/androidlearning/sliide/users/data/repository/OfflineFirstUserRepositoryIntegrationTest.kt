@@ -6,7 +6,6 @@ import androidx.test.platform.app.InstrumentationRegistry
 import assertk.assertThat
 import assertk.assertions.containsExactly
 import assertk.assertions.hasSize
-import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isFailure
 import assertk.assertions.isInstanceOf
@@ -17,6 +16,7 @@ import com.androidlearning.sliide.core.database.SliideDatabase
 import com.androidlearning.sliide.core.database.UserDao
 import com.androidlearning.sliide.core.database.UserEntity
 import com.androidlearning.sliide.core.domain.util.DataError
+import com.androidlearning.sliide.core.domain.util.FieldError
 import com.androidlearning.sliide.core.domain.util.Result
 import com.androidlearning.sliide.users.data.fake.FakeUserApiClient
 import com.androidlearning.sliide.users.data.fake.TestClock
@@ -109,17 +109,43 @@ class OfflineFirstUserRepositoryIntegrationTest {
         }
 
     @Test
-    fun rejectedReplayDropsEntryAndTempUserAcrossReopen() =
+    fun unauthorisedCreateIsQueuedAndLaterSyncRekeysIt() =
+        runTest {
+            apiClient.defaultError = DataError.Remote.UNAUTHORIZED
+
+            val result = repository().createUser(jane)
+
+            assertThat(result).isEqualTo(Result.Success(WriteStatus.QUEUED_AUTH_FAILED))
+            assertThat(
+                database.pendingSyncDao
+                    .getAllOrdered()
+                    .single()
+                    .operation,
+            ).isEqualTo(PendingOperation.CREATE)
+            reopenDatabase()
+
+            apiClient.defaultError = null
+            apiClient.nextServerId = 7001
+            val report = repository().syncPending()
+
+            assertThat(report).isEqualTo(Result.Success(SyncReport(synced = 1, rejected = 0)))
+            assertThat(database.userDao.getAll().map { it.id }).containsExactly(7001L)
+            assertThat(database.pendingSyncDao.count()).isEqualTo(0)
+        }
+
+    @Test
+    fun rejectedReplayDropsOnlyTheEntryAcrossReopen() =
         runTest {
             apiClient.defaultError = DataError.Remote.NO_INTERNET
             repository().createUser(jane)
-            apiClient.defaultError = DataError.Remote.VALIDATION
+            apiClient.defaultError = DataError.Validation(listOf(FieldError("email", "has already been taken")))
 
             val report = repository().syncPending()
             reopenDatabase()
 
             assertThat(report).isEqualTo(Result.Success(SyncReport(synced = 0, rejected = 1)))
-            assertThat(database.userDao.getAll()).isEmpty()
+            // The temp user stays until the next refresh replaces the cached list (spec: offline-sync).
+            assertThat(database.userDao.getAll().map { it.name }).containsExactly("Jane Doe")
             assertThat(database.pendingSyncDao.count()).isEqualTo(0)
         }
 

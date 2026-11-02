@@ -8,6 +8,7 @@ import assertk.assertions.isEqualTo
 import assertk.assertions.isNull
 import com.androidlearning.sliide.core.domain.util.DataError
 import com.androidlearning.sliide.core.domain.util.Result
+import com.androidlearning.sliide.users.domain.model.WriteStatus
 import com.androidlearning.sliide.users.presentation.fake.FakeUserRepository
 import com.androidlearning.sliide.users.presentation.fake.SchedulerClock
 import com.androidlearning.sliide.users.presentation.fake.TEST_NOW
@@ -174,18 +175,62 @@ class DeleteUndoControllerTest {
         }
 
     @Test
-    fun failedFinaliseEmitsAMessage() =
+    fun refusedFinaliseEmitsAMessageWithTheTypedError() =
         runTest {
             val controller = seeded()
-            repository.finalizeResult = Result.Failure(DataError.Remote.UNAUTHORIZED)
+            repository.finalizeResult = Result.Failure(DataError.Validation(emptyList()))
 
             controller.messages.test {
                 controller.request(jane.id)
                 advanceTimeBy(6.seconds)
 
-                assertThat(awaitItem()).isEqualTo(
-                    DeleteMessage.FinalizeFailed(userName = jane.name, error = DataError.Remote.UNAUTHORIZED),
-                )
+                assertThat(
+                    awaitItem(),
+                ).isEqualTo(DeleteMessage.FinalizeFailed(userName = jane.name, error = DataError.Validation(emptyList())))
+            }
+        }
+
+    @Test
+    fun finaliseWithUnexpectedStatusEmitsAMessage() =
+        runTest {
+            val controller = seeded()
+            val error = DataError.Remote.UNKNOWN
+            repository.finalizeResult = Result.Failure(error)
+
+            controller.messages.test {
+                controller.request(jane.id)
+                advanceTimeBy(6.seconds)
+
+                assertThat(awaitItem()).isEqualTo(DeleteMessage.FinalizeFailed(userName = jane.name, error = error))
+            }
+        }
+
+    @Test
+    fun finaliseQueuedForAuthFailureEmitsAMessage() =
+        runTest {
+            val controller = seeded()
+            repository.finalizeResult = Result.Success(WriteStatus.QUEUED_AUTH_FAILED)
+
+            controller.messages.test {
+                controller.request(jane.id)
+                advanceTimeBy(6.seconds)
+
+                assertThat(awaitItem()).isEqualTo(DeleteMessage.QueuedAuthFailed(userName = jane.name))
+            }
+        }
+
+    @Test
+    fun finaliseQueuedOfflineEmitsNoMessage() =
+        runTest {
+            val controller = seeded()
+            repository.finalizeResult = Result.Success(WriteStatus.QUEUED)
+
+            controller.messages.test {
+                controller.request(jane.id)
+                advanceTimeBy(6.seconds)
+
+                assertThat(repository.finalizedUsers).containsExactly(jane)
+                expectNoEvents()
             }
         }
 

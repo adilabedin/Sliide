@@ -2,6 +2,8 @@ package com.androidlearning.sliide.users.data.repository
 
 import assertk.assertThat
 import assertk.assertions.containsExactly
+import assertk.assertions.hasSize
+import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isNull
 import assertk.assertions.single
@@ -22,13 +24,37 @@ import kotlin.test.Test
 import kotlin.time.Duration.Companion.minutes
 
 /**
- * Outbox-first writes: a server-id update or delete is queued before its request, so a process killed mid-request
- * (modelled by cancelling the application scope, since operations outlive their caller) never loses the local change, and a permanent failure restores the previous outbox state exactly.
- * Also: temp ids are never reused within a process.
+ * Every write is queued only after its request fails, so a process killed mid-request (modelled by cancelling the
+ * application scope, since operations outlive their caller) loses that write and the next refresh shows the server's
+ * data (accepted). Temp ids are never reused within a process.
  */
 class OfflineFirstUserRepositoryCrashSafetyTest {
     @Test
-    fun processKilledDuringUpdateLeavesPendingUpdateWithNewData() =
+    fun processKilledDuringCreateLosesItAndRefreshRemovesTheTempUser() =
+        runTest {
+            val h = RepositoryHarness(backgroundScope)
+            h.apiClient.gate = CompletableDeferred() // never completed: the POST hangs
+
+            val killedScope = CoroutineScope(backgroundScope.coroutineContext + Job())
+            val firstProcess = h.newRepository(applicationScope = killedScope)
+            launch { firstProcess.createUser(details()) }
+            runCurrent()
+            killedScope.cancel()
+            runCurrent()
+
+            // Only a failed POST queues a create, so nothing is left to send after the restart.
+            assertThat(h.userDao.getById(-1)?.name).isEqualTo("Jane Doe")
+            assertThat(h.pendingSyncDao.entries).isEmpty()
+
+            h.apiClient.gate = null
+            h.apiClient.fetchLastPageResults += Result.Success(listOf(remoteUser(42)))
+            h.newRepository().refresh()
+            assertThat(h.userDao.users.map { it.id }).containsExactly(42L)
+            assertThat(h.apiClient.requests.filterIsInstance<RemoteRequest.Create>()).hasSize(1)
+        }
+
+    @Test
+    fun processKilledDuringUpdateLosesTheEditAndRefreshRestoresServerData() =
         runTest {
             val h = RepositoryHarness(backgroundScope)
             val original = h.seedUser(userEntity(42, name = "Old"))
@@ -42,25 +68,19 @@ class OfflineFirstUserRepositoryCrashSafetyTest {
             killedScope.cancel()
             runCurrent()
 
+            // Only a failed request queues an edit, so the cut-off one is shown but never sent.
             assertThat(h.userDao.getById(42)?.name).isEqualTo("New")
-            val entry = h.pendingSyncDao.entries.single()
-            assertThat(entry.operation).isEqualTo(PendingOperation.UPDATE)
-            assertThat(entry.user.name).isEqualTo("New")
+            assertThat(h.pendingSyncDao.entries).isEmpty()
 
-            // The queued edit protects the cache: after restart, refresh replays it instead of reverting it.
             h.apiClient.gate = null
-            h.apiClient.fetchLastPageResults += Result.Success(listOf(remoteUser(42, name = "New")))
+            h.apiClient.fetchLastPageResults += Result.Success(listOf(remoteUser(42, name = "Old")))
             h.newRepository().refresh()
-            assertThat(
-                h.apiClient.requests
-                    .drop(1)
-                    .first(),
-            ).isEqualTo(RemoteRequest.Update(42, details(name = "New", email = original.email)))
-            assertThat(h.userDao.getById(42)?.name).isEqualTo("New")
+            assertThat(h.apiClient.requests.filterIsInstance<RemoteRequest.Update>()).hasSize(1)
+            assertThat(h.userDao.getById(42)?.name).isEqualTo("Old")
         }
 
     @Test
-    fun processKilledDuringFinalizeDeleteLeavesPendingDeleteThatReplays() =
+    fun processKilledDuringFinalizeDeleteLosesTheDeleteAndRefreshBringsTheUserBack() =
         runTest {
             val h = RepositoryHarness(backgroundScope)
             val user = h.seedUser(userEntity(42)).toUser()
@@ -74,58 +94,53 @@ class OfflineFirstUserRepositoryCrashSafetyTest {
             killedScope.cancel()
             runCurrent()
 
+            // Only a failed request queues a delete, so the cut-off one leaves nothing to send.
             assertThat(h.userDao.getById(42)).isNull()
-            assertThat(
-                h.pendingSyncDao.entries
-                    .single()
-                    .operation,
-            ).isEqualTo(PendingOperation.DELETE)
+            assertThat(h.pendingSyncDao.entries).isEmpty()
 
-            // The Undo guard was lifted together with the queued DELETE, so the next process's replay sends it.
             h.apiClient.gate = null
-            h.newRepository().syncPending()
-            assertThat(h.apiClient.requests).containsExactly(RemoteRequest.Delete(42), RemoteRequest.Delete(42))
-            assertThat(h.pendingSyncDao.entries.size).isEqualTo(0)
+            h.apiClient.fetchLastPageResults += Result.Success(listOf(remoteUser(42)))
+            h.newRepository().refresh()
+            assertThat(h.apiClient.requests.filterIsInstance<RemoteRequest.Delete>()).hasSize(1)
+            assertThat(h.userDao.getById(42)?.id).isEqualTo(42L)
         }
 
     @Test
-    fun updateRejectedAfterPriorQueuedUpdateRestoresThatEntryExactly() =
+    fun updateRejectedAfterPriorQueuedUpdateDropsTheMergedEntry() =
         runTest {
             val h = RepositoryHarness(backgroundScope)
             val original = h.seedUser(userEntity(42, name = "Old"))
             h.apiClient.defaultError = DataError.Remote.NO_INTERNET
             h.repository.updateUser(original.toUser().copy(name = "First"))
-            val priorEntry = h.pendingSyncDao.entries.single()
-            val cachedAfterFirst = h.userDao.getById(42)
             h.apiClient.defaultError = null
             h.clock.advance(5.minutes)
-            h.apiClient.updateResults += Result.Failure(DataError.Remote.VALIDATION)
+            h.apiClient.updateResults += Result.Failure(emailTaken)
 
             val result = h.repository.updateUser(original.toUser().copy(name = "Second"))
 
-            assertThat(result).isEqualTo(Result.Failure(DataError.Remote.VALIDATION))
-            assertThat(h.pendingSyncDao.entries).containsExactly(priorEntry)
-            assertThat(h.userDao.getById(42)).isEqualTo(cachedAfterFirst)
+            // The earlier queued edit was merged into this one, so it goes too; the next refresh restores server data.
+            assertThat(result).isEqualTo(Result.Failure(emailTaken))
+            assertThat(h.pendingSyncDao.entries).isEmpty()
+            assertThat(h.userDao.getById(42)?.name).isEqualTo("Second")
         }
 
     @Test
-    fun finalizeDeleteRejectedAfterPriorQueuedUpdateRestoresThatEntryExactly() =
+    fun finalizeDeleteRejectedAfterPriorQueuedUpdateDropsTheMergedEntry() =
         runTest {
             val h = RepositoryHarness(backgroundScope)
             val original = h.seedUser(userEntity(42, name = "Old"))
             h.apiClient.defaultError = DataError.Remote.NO_INTERNET
             h.repository.updateUser(original.toUser().copy(name = "Edited"))
-            val priorEntry = h.pendingSyncDao.entries.single()
             val edited = h.userDao.getById(42)!!
             h.apiClient.defaultError = null
             h.repository.removeUserLocally(42)
-            h.apiClient.deleteResults += Result.Failure(DataError.Remote.UNAUTHORIZED)
+            h.apiClient.deleteResults += Result.Failure(DataError.Validation(emptyList()))
 
             val result = h.repository.finalizeDelete(edited.toUser())
 
-            assertThat(result).isEqualTo(Result.Failure(DataError.Remote.UNAUTHORIZED))
-            assertThat(h.pendingSyncDao.entries).containsExactly(priorEntry)
-            assertThat(h.userDao.getById(42)).isEqualTo(edited)
+            assertThat(result).isEqualTo(Result.Failure(DataError.Validation(emptyList())))
+            assertThat(h.pendingSyncDao.entries).isEmpty()
+            assertThat(h.userDao.getById(42)).isNull()
         }
 
     @Test
@@ -161,7 +176,9 @@ class OfflineFirstUserRepositoryCrashSafetyTest {
             val second = h.userDao.getById(-2)
 
             assertThat(second?.name).isEqualTo("Second")
-            assertThat(h.repository.updateUser(stale.copy(name = "Hijack"))).isEqualTo(Result.Failure(DataError.Local.NOT_FOUND))
+            assertThat(
+                h.repository.updateUser(stale.copy(name = "Hijack")),
+            ).isEqualTo(Result.Failure(DataError.Local.NOT_FOUND))
             assertThat(h.userDao.getById(-2)).isEqualTo(second)
             assertThat(
                 h.pendingSyncDao.entries

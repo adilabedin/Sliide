@@ -3,6 +3,8 @@ package com.androidlearning.sliide.users.data.repository
 import com.androidlearning.sliide.core.database.PendingOperation
 import com.androidlearning.sliide.core.database.PendingSyncEntity
 import com.androidlearning.sliide.core.database.UserEntity
+import com.androidlearning.sliide.core.domain.util.DataError
+import com.androidlearning.sliide.core.domain.util.FieldError
 import com.androidlearning.sliide.users.data.fake.FakeDatabaseTransactionRunner
 import com.androidlearning.sliide.users.data.fake.FakePendingSyncDao
 import com.androidlearning.sliide.users.data.fake.FakeUserApiClient
@@ -73,3 +75,6 @@ fun remoteUser(
     name: String = "User $id",
     email: String = "user$id@example.com",
 ): RemoteUser = RemoteUser(id = id, details = details(name = name, email = email))
+
+/** The 422 GoRest returns for a taken email. */
+val emailTaken: DataError = DataError.Validation(listOf(FieldError("email", "has already been taken")))
