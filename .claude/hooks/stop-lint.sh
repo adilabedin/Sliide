@@ -3,8 +3,8 @@
 #
 # If Kotlin files changed since the last clean lint, run `./gradlew ktlintCheck`.
 # On new violations, exit 2: Claude Code feeds stderr back to the agent and the
-# turn continues so it can fix them. Pre-existing violations are in each module's
-# ktlint-baseline.xml and don't fail the check.
+# turn continues so it can fix them. There are no baselines: every module must be clean.
+# Only reports written by this run's check tasks are shown, never stale ones from earlier runs.
 set -uo pipefail
 
 cd "${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}" || exit 0
@@ -21,12 +21,19 @@ state_dir=.claude/.cache; mkdir -p "$state_dir"
 fingerprint=$(for f in $changed; do [ -f "$f" ] && { echo "$f"; cat "$f"; }; done | shasum | cut -d' ' -f1)
 [ "$(cat "$state_dir/lint-ok" 2>/dev/null)" = "$fingerprint" ] && exit 0
 
+# Marker for "reports written by this run". Older reports under build/ (from earlier runs, deleted or renamed files,
+# or ktlintFormat, which lists what it already fixed) must not be reported as new violations.
+run_marker="$state_dir/lint-run"
+touch "$run_marker"
+
 if output=$(./gradlew ktlintCheck --console=plain -q 2>&1); then
   echo "$fingerprint" > "$state_dir/lint-ok"
   exit 0
 fi
 
-violations=$(find . -path '*/build/reports/ktlint/*' -name '*.txt' -size +0 -exec cat {} + 2>/dev/null | sed $'s/\x1b\\[[0-9;]*m//g')
+# A failing check task never counts as up to date, so its report is always rewritten by this run.
+violations=$(find . -path '*/build/reports/ktlint/*' -path '*Check*' -name '*.txt' -size +0 -newer "$run_marker" \
+               -exec cat {} + 2>/dev/null | sed $'s/\x1b\\[[0-9;]*m//g')
 report="ktlint found new violations:
 ${violations:-$output}
 
