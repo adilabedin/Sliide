@@ -10,16 +10,18 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 
 const val TEST_BASE_URL = "https://test.example/public/v2/"
 const val TEST_TOKEN = "test-token"
 
 /** A real [HttpClientFactory] client over a [MockEngine]; [engine] exposes the recorded requests. */
 class MockClient(
+    json: Json = goRestJson(),
     handler: suspend MockRequestHandleScope.(HttpRequestData) -> HttpResponseData,
 ) {
     val engine = MockEngine(handler)
-    val client: HttpClient = HttpClientFactory.create(engine, baseUrl = TEST_BASE_URL, apiToken = TEST_TOKEN)
+    val client: HttpClient = HttpClientFactory.create(engine, json, baseUrl = TEST_BASE_URL, apiToken = TEST_TOKEN)
 
     val requests: List<HttpRequestData> get() = engine.requestHistory
 }

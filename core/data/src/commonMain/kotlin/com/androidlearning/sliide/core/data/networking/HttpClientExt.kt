@@ -24,7 +24,7 @@ import io.ktor.http.isSuccess
 import io.ktor.serialization.ContentConvertException
 import io.ktor.utils.io.readRemaining
 import kotlinx.io.IOException
-import kotlinx.io.readString
+import kotlinx.io.readByteArray
 import kotlinx.serialization.SerializationException
 import kotlin.coroutines.cancellation.CancellationException
 
@@ -124,19 +124,24 @@ private const val MAX_ERROR_BODY_BYTES = 16 * 1024L
 
 /**
  * Parses GoRest's 422 body (`[{"field": "email", "message": "has already been taken"}]`) into a
- * [DataError.Validation], keeping fields and messages unchanged and in order. Never throws (except cancellation): a body
- * that is empty, not JSON, not a list of field errors, or fails to read gives a validation failure with no fields.
+ * [DataError.Validation], keeping fields and messages unchanged and in order. It reads at most
+ * [MAX_ERROR_BODY_BYTES], whatever the headers say (chunked and transparently unzipped responses carry no
+ * `Content-Length`), and decodes with the client's injected `Json` ([HttpClientFactory.JsonKey]), so error bodies
+ * follow the same rules as successes. Never throws (except cancellation): a body that is empty, not JSON, not a list of
+ * field errors, larger than the limit, or fails to read gives a validation failure with no fields.
  */
 @PublishedApi
 internal suspend fun HttpResponse.readValidationError(): DataError.Validation {
     val fields =
         try {
-            val text = bodyAsChannel().readRemaining(MAX_ERROR_BODY_BYTES).readString()
-            if (text.isBlank()) {
+            // One byte past the limit tells "exactly at the limit" from "cut off".
+            // An empty or blank body fails to decode and lands in the catch below.
+            val bytes = bodyAsChannel().readRemaining(MAX_ERROR_BODY_BYTES + 1).readByteArray()
+            if (bytes.size > MAX_ERROR_BODY_BYTES) {
                 emptyList()
             } else {
-                HttpClientFactory.json
-                    .decodeFromString<List<GoRestFieldErrorDto>>(text)
+                call.client.attributes[HttpClientFactory.JsonKey]
+                    .decodeFromString<List<GoRestFieldErrorDto>>(bytes.decodeToString())
                     .map { FieldError(field = it.field, message = it.message) }
             }
         } catch (e: CancellationException) {

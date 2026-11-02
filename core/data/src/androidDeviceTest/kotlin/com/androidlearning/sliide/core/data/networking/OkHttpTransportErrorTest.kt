@@ -17,7 +17,7 @@ class OkHttpTransportErrorTest {
     @Test
     fun refusedConnectionIsNoInternet() =
         runTest {
-            val client = HttpClientFactory.create(OkHttp.create(), baseUrl = REFUSED_URL, apiToken = "")
+            val client = HttpClientFactory.create(OkHttp.create(), goRestJson(), baseUrl = REFUSED_URL, apiToken = "")
 
             assertThat(client.get<List<TestDto>>("users")).isEqualTo(Result.Failure(DataError.Remote.NO_INTERNET))
             assertThat(client.delete("users/1")).isEqualTo(Result.Failure(DataError.Remote.NO_INTERNET))

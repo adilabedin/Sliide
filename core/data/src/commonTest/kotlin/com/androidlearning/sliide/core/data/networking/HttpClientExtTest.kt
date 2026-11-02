@@ -13,6 +13,8 @@ import io.ktor.client.request.HttpRequestData
 import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.test.runTest
 import kotlinx.io.IOException
+import kotlinx.serialization.SerializationException
+import kotlinx.serialization.json.Json
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
@@ -37,6 +39,7 @@ class HttpClientExtTest {
                     429 to DataError.Remote.TOO_MANY_REQUESTS,
                     500 to DataError.Remote.SERVER_ERROR,
                     503 to DataError.Remote.SERVER_ERROR,
+                    599 to DataError.Remote.SERVER_ERROR,
                     418 to DataError.Remote.UNKNOWN,
                 )
             expected.forEach { (code, error) ->
@@ -87,6 +90,54 @@ class HttpClientExtTest {
                 writes.forEach { (name, call) ->
                     assertThat(mock.client.call(), "$name body=$body").isEqualTo(Result.Failure(DataError.Validation(emptyList())))
                 }
+            }
+        }
+
+    @Test
+    fun unprocessableEntityBodyIsDecodedWithTheInjectedJson() =
+        runTest {
+            val strict = Json { ignoreUnknownKeys = false }
+            val body = """[{"field":"email","message":"is invalid","code":7}]"""
+            val mock = MockClient(json = strict) { respondJson(body, status = HttpStatusCode.UnprocessableEntity) }
+
+            writes.forEach { (name, call) ->
+                // The strict Json rejects the unknown "code" key, so the default lenient Json was not used.
+                assertThat(mock.client.call(), name).isEqualTo(Result.Failure(DataError.Validation(emptyList())))
+            }
+        }
+
+    @Test
+    fun unprocessableEntityBodyOfExactlyTheLimitIsStillParsed() =
+        runTest {
+            val mock = MockClient { respondJson(paddedFieldErrors(16 * 1024), status = HttpStatusCode.UnprocessableEntity) }
+
+            writes.forEach { (name, call) ->
+                assertThat(mock.client.call(), name)
+                    .isEqualTo(Result.Failure(DataError.Validation(listOf(FieldError("email", "is invalid")))))
+            }
+        }
+
+    @Test
+    fun validUnprocessableEntityBodyOneByteOverTheLimitIsValidationWithNoFields() =
+        runTest {
+            // Valid JSON whose first 16 KiB alone would still decode: only the size check rejects it.
+            val mock = MockClient { respondJson(paddedFieldErrors(16 * 1024 + 1), status = HttpStatusCode.UnprocessableEntity) }
+
+            writes.forEach { (name, call) ->
+                assertThat(mock.client.call(), name).isEqualTo(Result.Failure(DataError.Validation(emptyList())))
+            }
+        }
+
+    @Test
+    fun oversizedUnprocessableEntityBodyIsValidationWithNoFields() =
+        runTest {
+            val entry = """{"field":"email","message":"is invalid"}"""
+            val body = (1..1_000).joinToString(prefix = "[", postfix = "]", separator = ",") { entry }
+            // No Content-Length, as with a chunked or transparently unzipped response: the read itself must stop.
+            val mock = MockClient { respondJson(body, status = HttpStatusCode.UnprocessableEntity) }
+
+            writes.forEach { (name, call) ->
+                assertThat(mock.client.call(), name).isEqualTo(Result.Failure(DataError.Validation(emptyList())))
             }
         }
 
@@ -165,6 +216,14 @@ class HttpClientExtTest {
         }
 
     @Test
+    fun serializationExceptionIsSerializationError() =
+        runTest {
+            val mock = MockClient { throw SerializationException("unexpected token") }
+
+            assertThat(mock.client.get<TestDto>("users")).isEqualTo(Result.Failure(DataError.Remote.SERIALIZATION))
+        }
+
+    @Test
     fun otherExceptionsAreUnknown() =
         runTest {
             val mock = MockClient { throw IllegalStateException("boom") }
@@ -182,4 +241,10 @@ class HttpClientExtTest {
         }
 
     private fun HttpRequestData.urlString(): String = url.toString()
+
+    /** One GoRest field error, padded with trailing spaces (still valid JSON) to exactly [sizeBytes] bytes. */
+    private fun paddedFieldErrors(sizeBytes: Int): String {
+        val json = """[{"field":"email","message":"is invalid"}]"""
+        return json + " ".repeat(sizeBytes - json.encodeToByteArray().size)
+    }
 }

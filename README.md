@@ -47,6 +47,10 @@ One `HttpClient`, built by `HttpClientFactory` and shared through Koin. The cont
   key. Only a backend proxy could truly hide it, which is out of scope here.
 - **Every request** carries `Authorization: Bearer <token>` and `Accept: application/json`. POST and PATCH send JSON
   bodies. Unknown response fields are ignored.
+- **One injected `Json`.** `goRestJson()` holds the decoding rules; Koin binds one instance and passes it to
+  `HttpClientFactory.create(engine, json)`, which installs it in `ContentNegotiation` and registers it on the client
+  (`HttpClientFactory.JsonKey`) for the size-capped 422 parser. There is no second, global `Json`. Tests build the
+  client the same way.
 - **Timeouts:** 20 s per request, 10 s to connect, 20 s socket. No request waits longer than one timeout.
 - **Routes are relative with no leading slash** (`"users"`, `"users/42"`). A leading `/` would replace the base path
   and drop `/public/v2`.
@@ -56,8 +60,8 @@ One `HttpClient`, built by `HttpClientFactory` and shared through Koin. The cont
   throws, except for cancellation, which always propagates.
 - **422 on a write** is parsed from GoRest's body (`[{"field": "email", "message": "has already been taken"}]`, the
   same format on every endpoint) into `DataError.Validation(fields)`, keeping fields and messages unchanged and in
-  order. A body that is empty, not JSON, not a list, or fails to read (at most 16 KB is read) gives
-  `Validation(emptyList())`, never a serialization error.
+  order. A body that is empty, not JSON, not a list, larger than 16 KB (at most that much is read, whatever the headers
+  say), or fails to read gives `Validation(emptyList())`, never a serialization error.
 
 How the other responses and exceptions map to `DataError.Remote`. What a failed *write* then means (kept for later,
 rejected, already gone) is decided by the users feature, not here.
