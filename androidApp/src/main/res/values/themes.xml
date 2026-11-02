@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- App window theme. Its window background is the in-app background, so nothing flashes between the splash and
+         Compose's first frame. -->
+    <style name="Theme.Sliide" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/window_background</item>
+    </style>
+
+    <!-- Launch theme of MainActivity: the native splash (AndroidX SplashScreen, back-ported to API 26-30). -->
+    <style name="Theme.Sliide.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/splash_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_logo_mark</item>
+        <item name="postSplashScreenTheme">@style/Theme.Sliide</item>
+    </style>
+
+</resources>

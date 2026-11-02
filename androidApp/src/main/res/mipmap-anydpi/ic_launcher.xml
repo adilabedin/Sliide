@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- minSdk 26, so the adaptive icon is always used and needs no -v26 qualifier or PNG fallbacks. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/icon_background" />
+    <foreground android:drawable="@drawable/ic_logo_mark" />
+    <monochrome android:drawable="@drawable/ic_logo_mark" />
+</adaptive-icon>
