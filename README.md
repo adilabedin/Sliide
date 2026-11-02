@@ -288,7 +288,13 @@ status. A refresh never writes to the screen state directly; its results arrive 
 shows:
 - **20 lazily built shimmer cards** while the cache is empty and the first refresh is still running;
 - a **full-screen error** with Retry when the refresh failed and nothing is cached;
-- a slim, dismissible **banner** ("No internet connection") above the cached list when there is data to show.
+- a slim, dismissible **banner** ("No internet connection") above the cached list when there is data to show;
+- an **empty state** ("No users yet") with Retry when the refresh succeeded but returned no users.
+
+**The pull indicator means "you pulled".** The ViewModel records what started each refresh (launch, pull or Retry),
+and only a pull shows the pull-to-refresh spinner. The automatic refresh on launch is silent: an empty cache shows the
+shimmer, and cached cards appear with no spinner. A Retry from a full-screen state shows the shimmer. A pull while the
+launch refresh is still running shows the spinner until that refresh ends, without starting a second one.
 
 **One adaptive scaffold, no NavHost.** `UsersListDetailRoot` hosts Material 3 Adaptive's `ListDetailPaneScaffold`:
 - the feed is the list pane and the reusable profile is the detail pane;

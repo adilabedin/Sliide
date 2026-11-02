@@ -106,6 +106,46 @@ class UsersViewModelTest {
         }
 
     @Test
+    fun retryFromTheEmptyStateShowsTheShimmerThenTheUsers() =
+        runTest {
+            val (viewModel) = viewModel()
+            viewModel.state.test {
+                repository.emit(emptyList())
+                assertThat(expectMostRecentItem().content).isEqualTo(FeedContent.Empty)
+
+                repository.refreshGate = CompletableDeferred()
+                viewModel.onAction(UsersAction.OnRetry)
+                val retrying = expectMostRecentItem()
+                assertThat(retrying.content).isEqualTo(FeedContent.Loading)
+                assertThat(retrying.isRefreshing).isFalse()
+                assertThat(repository.refreshCount).isEqualTo(2)
+
+                repository.emit(listOf(jane))
+                repository.refreshGate!!.complete(Unit)
+                val done = expectMostRecentItem()
+                assertThat(done.content).isEqualTo(FeedContent.Users)
+                assertThat(done.isRefreshing).isFalse()
+            }
+        }
+
+    @Test
+    fun retryFromTheEmptyStateReturnsToEmptyWhenStillNoUsers() =
+        runTest {
+            val (viewModel) = viewModel()
+            viewModel.state.test {
+                repository.emit(emptyList())
+                assertThat(expectMostRecentItem().content).isEqualTo(FeedContent.Empty)
+
+                repository.refreshGate = CompletableDeferred()
+                viewModel.onAction(UsersAction.OnRetry)
+                assertThat(expectMostRecentItem().content).isEqualTo(FeedContent.Loading)
+
+                repository.refreshGate!!.complete(Unit)
+                assertThat(expectMostRecentItem().content).isEqualTo(FeedContent.Empty)
+            }
+        }
+
+    @Test
     fun emptyCacheWithFailedRefreshShowsFullScreenError() =
         runTest {
             repository.refreshResult = Result.Failure(DataError.Remote.NO_INTERNET)
@@ -167,17 +207,72 @@ class UsersViewModelTest {
         }
 
     @Test
-    fun pullWhileRefreshingDoesNotStartAnotherRefresh() =
+    fun pullDuringTheLaunchRefreshShowsTheIndicatorWithoutASecondRefresh() =
         runTest {
             repository.refreshGate = CompletableDeferred()
             val (viewModel) = viewModel()
             viewModel.state.test {
                 repository.emit(listOf(jane))
-                assertThat(expectMostRecentItem().isRefreshing).isTrue()
+                assertThat(expectMostRecentItem().isRefreshing).isFalse()
 
                 viewModel.onAction(UsersAction.OnRefresh)
                 viewModel.onAction(UsersAction.OnRefresh)
+                assertThat(expectMostRecentItem().isRefreshing).isTrue()
                 assertThat(repository.refreshCount).isEqualTo(1)
+
+                repository.refreshGate!!.complete(Unit)
+                assertThat(expectMostRecentItem().isRefreshing).isFalse()
+            }
+        }
+
+    @Test
+    fun launchRefreshWithCachedUsersShowsNoIndicator() =
+        runTest {
+            repository.refreshGate = CompletableDeferred()
+            val (viewModel) = viewModel()
+            viewModel.state.test {
+                repository.emit(listOf(jane, rahul))
+
+                val state = expectMostRecentItem()
+                assertThat(state.content).isEqualTo(FeedContent.Users)
+                assertThat(state.isRefreshing).isFalse()
+                assertThat(repository.refreshCount).isEqualTo(1)
+
+                // Finishing changes nothing visible, so the state flow emits no new item.
+                repository.refreshGate!!.complete(Unit)
+                assertThat(viewModel.state.value.isRefreshing).isFalse()
+            }
+        }
+
+    @Test
+    fun usersArrivingDuringTheFirstLaunchRefreshShowNoIndicator() =
+        runTest {
+            repository.refreshGate = CompletableDeferred()
+            val (viewModel) = viewModel()
+            viewModel.state.test {
+                repository.emit(emptyList())
+                assertThat(expectMostRecentItem().content).isEqualTo(FeedContent.Loading)
+
+                // The refresh writes users into the cache before it returns.
+                repository.emit(listOf(jane))
+                val state = expectMostRecentItem()
+                assertThat(state.content).isEqualTo(FeedContent.Users)
+                assertThat(state.isRefreshing).isFalse()
+            }
+        }
+
+    @Test
+    fun pullWhenIdleShowsTheIndicatorUntilTheRefreshEnds() =
+        runTest {
+            val (viewModel) = viewModel()
+            viewModel.state.test {
+                repository.emit(listOf(jane))
+                assertThat(expectMostRecentItem().isRefreshing).isFalse()
+
+                repository.refreshGate = CompletableDeferred()
+                viewModel.onAction(UsersAction.OnRefresh)
+                assertThat(expectMostRecentItem().isRefreshing).isTrue()
+                assertThat(repository.refreshCount).isEqualTo(2)
 
                 repository.refreshGate!!.complete(Unit)
                 assertThat(expectMostRecentItem().isRefreshing).isFalse()

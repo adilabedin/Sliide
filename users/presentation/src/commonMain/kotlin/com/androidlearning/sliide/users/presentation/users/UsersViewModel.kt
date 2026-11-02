@@ -78,7 +78,7 @@ class UsersViewModel(
         }.onStart {
             if (!hasStarted) {
                 hasStarted = true
-                startRefresh()
+                startRefresh(RefreshTrigger.Launch)
                 observeDeleteMessages()
             }
         }.stateIn(
@@ -89,7 +89,8 @@ class UsersViewModel(
 
     fun onAction(action: UsersAction) {
         when (action) {
-            UsersAction.OnRefresh, UsersAction.OnRetry -> startRefresh()
+            UsersAction.OnRefresh -> startRefresh(RefreshTrigger.Pull)
+            UsersAction.OnRetry -> startRefresh(RefreshTrigger.Retry)
             UsersAction.OnDismissBanner -> refresh.update { it.copy(bannerDismissed = true) }
             is UsersAction.OnDeleteRequest -> local.update { it.copy(confirmDeleteId = action.userId) }
             UsersAction.OnDeleteCancel -> local.update { it.copy(confirmDeleteId = null) }
@@ -107,17 +108,23 @@ class UsersViewModel(
         }
     }
 
-    /** Starts a refresh unless one is running (spec: "Pull during a refresh"). */
-    private fun startRefresh() {
-        if (refreshJob?.isActive == true) return
-        refresh.update { it.copy(isRunning = true) }
+    /**
+     * Starts a refresh unless one is running (spec: "Pull during a refresh"). A pull during a running refresh only marks
+     * it as user-requested, so the pull indicator shows until it ends (design D2).
+     */
+    private fun startRefresh(trigger: RefreshTrigger) {
+        if (refreshJob?.isActive == true) {
+            if (trigger == RefreshTrigger.Pull) refresh.update { it.copy(running = RefreshTrigger.Pull) }
+            return
+        }
+        refresh.update { it.copy(running = trigger) }
         refreshJob =
             viewModelScope.launch {
                 val result = userRepository.refresh()
                 refresh.update {
                     when (result) {
-                        is Result.Success -> RefreshState(isRunning = false, lastError = null)
-                        is Result.Failure -> RefreshState(isRunning = false, lastError = result.error)
+                        is Result.Success -> RefreshState(running = null, lastError = null)
+                        is Result.Failure -> RefreshState(running = null, lastError = result.error)
                     }
                 }
             }
@@ -153,7 +160,7 @@ class UsersViewModel(
             when {
                 users == null -> FeedContent.Loading
                 cards.isNotEmpty() -> FeedContent.Users
-                refresh.isRunning -> FeedContent.Loading
+                refresh.running != null -> FeedContent.Loading
                 refresh.lastError != null -> FeedContent.Error(refresh.lastError.toUiText())
                 else -> FeedContent.Empty
             }
@@ -168,7 +175,9 @@ class UsersViewModel(
         return UsersState(
             users = cards,
             content = content,
-            isRefreshing = refresh.isRunning && cards.isNotEmpty(),
+            // Only a pull shows the pull indicator: the launch refresh and Retry are covered by the shimmer or the cached
+            // cards (spec: "Pull to refresh").
+            isRefreshing = refresh.running == RefreshTrigger.Pull && cards.isNotEmpty(),
             banner =
                 refresh.lastError
                     ?.takeIf { cards.isNotEmpty() && !refresh.bannerDismissed }
@@ -188,8 +197,12 @@ class UsersViewModel(
         )
     }
 
+    /** What started the running refresh; only [Pull] shows the pull indicator (design D1). */
+    private enum class RefreshTrigger { Launch, Pull, Retry }
+
+    /** [running] is the trigger of the refresh in flight, or `null` when idle. */
     private data class RefreshState(
-        val isRunning: Boolean = false,
+        val running: RefreshTrigger? = null,
         val lastError: DataError? = null,
         val bannerDismissed: Boolean = false,
     )
