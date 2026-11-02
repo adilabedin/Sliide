@@ -31,7 +31,7 @@
 
 ## 2. `:core:designsystem`
 
-- [ ] 2.1 Create `core/designsystem` with `cmp.library`. Add `SliideTheme` (light/dark `ColorScheme`, `Typography`, `isSystemInDarkTheme()` default, no dynamic colour) in `commonMain`, plus a theme preview in light and in dark (`android-compose-components`). Register the module in settings. Verify: `./gradlew :core:designsystem:build` passes and both previews render (android-cli `render-compose-preview`).
+- [x] 2.1 Create `core/designsystem` with `cmp.library`. Add `SliideTheme` (light/dark `ColorScheme`, `Typography`, `isSystemInDarkTheme()` default, no dynamic colour) in `commonMain`, plus a theme preview in light and in dark (`android-compose-components`). Register the module in settings. Verify: `./gradlew :core:designsystem:build` passes and both previews render (android-cli `render-compose-preview`).
 
 ## 3. `:core:database`
 
@@ -80,7 +80,7 @@
   - `usersPresentationModule`
 
   Verify: `./gradlew :users:presentation:build` passes, and its `dependencies` report shows no `data`/`database` modules.
-- [ ] 6.2 Add `UsersScreen` previews (`android-compose-components`): empty, loading and populated states, each in light and dark, wrapped in `SliideTheme`, with realistic sample users. `UsersRoot` gets no preview. Verify: each preview renders with android-cli `render-compose-preview`.
+- [x] 6.2 Add `UsersScreen` previews (`android-compose-components`): empty, loading and populated states, each in light and dark, wrapped in `SliideTheme`, with realistic sample users. `UsersRoot` gets no preview. Verify: each preview renders with android-cli `render-compose-preview`.
 - [x] 6.3 Add `commonTest` `UsersViewModelTest` with a `FakeUserRepository`, `Dispatchers.setMain` (test dispatcher) and Turbine. It covers: the initial loading state, the populated state mapped from domain users, and the empty list. Verify: `./gradlew :users:presentation:testAndroidHostTest :users:presentation:iosSimulatorArm64Test` passes.
 
 ## 7. Rename `:shared` → `:composeApp` and wire the app shell
