@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Window, splash and launcher-icon colours. Android resources cannot read Compose colours, so these copy the hex
+     values from core/designsystem/.../theme/Color.kt, which is the source of truth (and tools/brand mirrors them). -->
+<resources>
+    <!-- Midnight -->
+    <color name="splash_background">#FF1E2A4A</color>
+    <!-- Porcelain: the light in-app background, so the window matches Compose's first frame -->
+    <color name="window_background">#FFF6F6F3</color>
+    <!-- ChampagneLight -->
+    <color name="logo_mark">#FFD9BF86</color>
+    <!-- Midnight: the launcher icon background in both modes -->
+    <color name="icon_background">#FF1E2A4A</color>
+</resources>

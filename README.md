@@ -358,6 +358,33 @@ header and form, and the snackbar host. Each one ships its own previews. Generic
 - **An extra Status toggle (Active / Inactive):** GoRest requires a status when a user is created.
 - **A back arrow before "Profile" on full-screen profiles:** iOS has no system back button.
 
+### App branding & splash
+
+The planning artifacts are in [`openspec/changes/native-splash`](./openspec/changes/native-splash).
+
+**The logo mark.** The mark is a rounded-stroke champagne "S" on midnight. It is defined once, as Bézier constants on
+the 108×108 adaptive-icon grid, in
+[`tools/brand/generate_brand_assets.py`](./tools/brand/generate_brand_assets.py). That script writes the Android vector
+`ic_logo_mark.xml` and the iOS PNGs (`LaunchLogo`, plus `AppIcon` in light, dark and tinted), and fails if the mark drops
+below 3:1 contrast against either splash background. The outputs are committed, so neither build depends on Python.
+
+**Native splash on both platforms, no Compose splash.** The launch screen appears before any Kotlin runs, so it is
+platform-owned and needs no `expect`/`actual`. A Compose splash would only show after the system one, so the user would
+see two.
+- **Android:** the AndroidX SplashScreen API (back-ported to API 26–30). `MainActivity` launches with
+  `Theme.Sliide.Starting` (the mark on `splash_background`: Midnight, or Ink900 at night), and `installSplashScreen()`
+  then switches it to `Theme.Sliide`. That theme's window background is the in-app background, so no white frame
+  appears before Compose draws, which also fixes a white flash in dark mode. `SplashThemeTest` checks the switch.
+  The launcher icon is an adaptive icon (`mipmap-anydpi`) with the mark as its foreground and as a monochrome layer
+  for themed icons.
+- **iOS:** a `UILaunchScreen` dictionary in `Info.plist` (`LaunchLogo` on the `LaunchBackground` colour set, which has
+  a dark variant) replaces Xcode's generated empty launch screen. There is no storyboard.
+
+**The splash goes away on the first frame.** It is not held while data loads: Room is the source of truth, so the
+first frame already shows the cached feed or the shimmer.
+
+iOS caches launch screens. To see a change on a simulator, delete the app first.
+
 ## Running the apps
 
 **First, set the GoRest token.** Add your token (from [gorest.co.in](https://gorest.co.in/consumer/login)) to the
@@ -559,6 +586,20 @@ single `DataError.Validation(fields)` beside it. Claude updated the OpenSpec pro
 first, unticked every task whose behaviour had changed, then re-implemented bottom-up. Throughout, the message text
 stays uninterpreted (no matching on "taken"), every keep/reject decision lives in one pure `OutboxPolicy` table, and
 the tests that asserted "401 rolls back" were rewritten to the new spec rather than deleted.
+
+### Example: native splash
+
+The splash ([`openspec/changes/native-splash`](./openspec/changes/native-splash)) started as "a splash with a logo on
+Android and iOS". The repo had no logo, only template launcher icons. Claude proposed an original mark in the existing
+palette, and the developer redirected it to the platforms' native splash APIs before any code was written. Claude then
+planned the change with OpenSpec. The plan has one geometry source for every asset, a contrast check, and an
+instrumented test for the theme switch. Claude confirmed that test is meaningful by deleting `installSplashScreen()`
+and watching it fail.
+
+The visual checks were automated on emulators and the simulator. A screenshot loop was too slow to catch a splash
+lasting under a second, so Claude recorded each cold start (`adb shell screenrecord`, `xcrun simctl io recordVideo`)
+and sampled the frame colours. That confirmed the light and dark backgrounds, the centred mark, and a hand-off with no
+white frame on API 37, API 30 and iOS.
 
 ---
 
