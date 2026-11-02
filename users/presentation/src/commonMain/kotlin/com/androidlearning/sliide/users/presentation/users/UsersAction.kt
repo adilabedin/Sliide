@@ -30,9 +30,17 @@ sealed interface UsersAction {
         val userId: Long,
     ) : UsersAction
 
-    /** The detail pane now shows [userId] (or nothing): drives the card highlight on two-pane layouts. */
+    /**
+     * The profile the user chose to open: a user id, `ProfileKey.CREATE`, or `null` when none is chosen. Drives the
+     * card highlight and, on two-pane layouts, the default first-user selection.
+     */
     data class OnSelectionChange(
-        val userId: Long?,
+        val key: Long?,
+    ) : UsersAction
+
+    /** Whether the feed and the detail pane are shown side by side (expanded width). */
+    data class OnPaneLayoutChange(
+        val isTwoPane: Boolean,
     ) : UsersAction
 
     /** A user was created from the profile: scroll to the top where it appears. */

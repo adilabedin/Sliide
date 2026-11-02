@@ -1,4 +1,4 @@
-package com.androidlearning.sliide.users.presentation.users.components
+package com.androidlearning.sliide.users.presentation.composables
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -21,6 +21,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -35,7 +36,6 @@ import com.androidlearning.sliide.users.presentation.generated.resources.users_d
 import com.androidlearning.sliide.users.presentation.generated.resources.users_open_profile
 import com.androidlearning.sliide.users.presentation.generated.resources.users_pending_sync
 import com.androidlearning.sliide.users.presentation.users.UserUi
-import com.androidlearning.sliide.users.presentation.users.previewUsers
 import com.androidlearning.sliide.users.presentation.util.asAddedText
 import org.jetbrains.compose.resources.stringResource
 
@@ -44,7 +44,7 @@ import org.jetbrains.compose.resources.stringResource
  * sync" chip. Tap opens the profile; long-press (with haptics) or the "Delete" accessibility action asks to delete.
  */
 @Composable
-fun UserCard(
+internal fun UserCard(
     user: UserUi,
     selected: Boolean,
     onClick: () -> Unit,
@@ -64,6 +64,8 @@ fun UserCard(
         onLongClickLabel = deleteLabel,
         modifier =
             modifier.semantics {
+                // Only the highlighted card says so; unselected cards stay silent rather than "not selected".
+                if (selected) this.selected = true
                 customActions =
                     listOf(
                         CustomAccessibilityAction(deleteLabel) {

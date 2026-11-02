@@ -271,7 +271,14 @@ shows:
 - the feed is the list pane and the reusable profile is the detail pane;
 - on phones the profile opens full screen and back returns to the feed;
 - in landscape and on small tablets the feed becomes a two-column grid;
-- on wide screens the feed and the profile sit side by side, with the selected card highlighted.
+- on wide screens the feed and the profile sit side by side, with the selected card highlighted. Until you pick a
+  user, the detail pane shows the **first user in the feed** (computed in `UsersViewModel` as
+  `defaultSelectedUserId`, and covered by unit tests). It follows the first card after a delete, Undo, create or
+  refresh. The default is rendered without navigating, so shrinking the window shows the plain list, and back still
+  leaves the app. Once you start editing it, it is promoted to a real selection, so the draft survives a resize.
+
+The feed's app bar is **pinned**: a single-line `TopAppBar` with `pinnedScrollBehavior`. It never collapses or moves;
+it only tints while the lazily built list or grid scrolls beneath it.
 
 The navigator's content key is a plain `Long` (the user id, or a `CREATE` sentinel), so the open profile survives
 rotation, resizing and process death. Back is handled with Compose's `BackHandler`, because the "navigable" scaffold
@@ -280,8 +287,9 @@ variant is Android-only.
 **One reusable profile.** A single `ProfileViewModel` is pointed at a new target with `OnOpen(key)` and serves three
 modes:
 - **View:** the Edit icon sits at the top right.
-- **Edit:** the icon animates into a **Save** text button, and a close icon discards the draft.
-- **Create:** the add-user FAB opens a blank form titled "New user".
+- **Edit:** the icon animates into a large, filled **Save** button, and a close icon discards the draft.
+- **Create:** the add-user FAB opens a blank form titled "New user", with a back arrow in every layout, because the
+  form slides in as a navigation step.
 
 It also handles:
 - **Validation:** `UserDetailsValidator` is shared domain logic and runs as you type.
@@ -296,9 +304,20 @@ ends exactly once:
 - either with `restoreUser`, when the user presses Undo;
 - or with `finalizeDelete`, when the timer runs out, the snackbar is swiped away, or a newer delete starts.
 
+The confirmation dialog, shared by the feed's long-press and the profile's Delete button, has a close icon at the top
+start, a large bin icon, and one full-width destructive **Delete** button. That is the same `DestructiveButton` the
+profile uses. There is no separate Cancel button; the close icon, back or an outside tap dismiss it.
+
 Its timer was not put in `viewModelScope`, because if the activity finished during the window, the delete would never
 be finalised and `refresh` would stay blocked. The snackbar is a normal `SnackbarHost` on the feed, driven by the
 controller's state, with a countdown line that resumes after rotation.
+
+**Where composables live.** Root and Screen composables stay next to their ViewModel, State and Action types
+(`users/`, `profile/`, `listdetail/`). Every smaller composable of the feature lives in one package,
+`users/presentation/.../composables`: the card, the feed and its placeholders (one shared lazy layout), the delete
+dialog, the select-user placeholder, the shared app bar and back/close icon button, the profile top bar, Save button,
+header and form, and the snackbar host. Each one ships its own previews. Generic building blocks stay in
+`:core:designsystem` until a second feature needs a feature-level piece.
 
 **Design system.** All of this lives in `:core:designsystem`:
 - **Palette:** deep ink neutrals, a midnight primary, one restrained champagne accent, and a refined red used only for
@@ -447,6 +466,27 @@ During implementation it drove the emulators over `adb` to check:
 That pass found a real bug: closing the profile pane didn't reset its ViewModel, so the Create form reopened with the
 old draft. The fix (`ProfileAction.OnDismiss`) came with regression tests. It also caught two visual issues, an
 untinted gap between the panes and a selection tint that matched one of the avatar tones, and verified their fixes.
+
+### Example: UI polish
+
+The polish pass ([`openspec/changes/polish-users-ui`](./openspec/changes/polish-users-ui)) started as a list of UI
+complaints: a moving app bar, an empty tablet detail pane, a close icon on a screen that slides in, a small Save
+button, a two-button delete dialog, and composables scattered across packages. Before planning, Claude asked two
+questions whose answers changed the scope: should design-system components move too (no, feature only), and how big
+the Save button should be (a bigger filled button in the app bar). While planning, it found a spec conflict. The
+existing "profile closes when its user disappears" rule would show a false "no longer available" message when the
+default-selected user is deleted, so it added a scenario for a silent re-target. It also put the default selection
+in the ViewModel, so the rule is unit-tested rather than buried in a composable.
+
+During implementation it drove the tablet emulator over `adb`:
+- the first user selected in landscape;
+- an edit on that default surviving a rotation to portrait;
+- deleting the default re-targeting to the next user with no message, then Undo inside the window, so no live GoRest
+  user was deleted;
+- the new dialog and the Create back arrow.
+
+It also found that `ObserveAsEvents` keeps the callbacks from the first composition, so the root reads the
+"showing the default" flag through `rememberUpdatedState`.
 
 ### Example: background sync
 

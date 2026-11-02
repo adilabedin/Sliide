@@ -6,8 +6,13 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -15,12 +20,14 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeUp
 import com.androidlearning.sliide.core.designsystem.theme.SliideTheme
-import com.androidlearning.sliide.users.presentation.users.components.PLACEHOLDER_COUNT
-import com.androidlearning.sliide.users.presentation.users.components.PLACEHOLDER_TEST_TAG
+import com.androidlearning.sliide.users.presentation.composables.PLACEHOLDER_COUNT
+import com.androidlearning.sliide.users.presentation.composables.PLACEHOLDER_TEST_TAG
 import com.androidlearning.sliide.users.presentation.util.RelativeTime
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
@@ -95,7 +102,7 @@ class UsersScreenTest {
         setContent()
         composeRule.onNodeWithText("Jane Doe").performTouchInput { longClick() }
 
-        composeRule.onNodeWithText("Cancel").performClick()
+        composeRule.onNodeWithContentDescription("Cancel").performClick()
 
         composeRule.onAllNodesWithText("Delete Jane Doe?").assertCountEquals(0)
         composeRule.onNodeWithText("Jane Doe").assertIsDisplayed()
@@ -135,5 +142,64 @@ class UsersScreenTest {
         composeRule.onNodeWithText("Undo").performClick()
 
         composeRule.runOnIdle { assertEquals(UsersAction.OnUndoDelete(jane.id), actions.last()) }
+    }
+
+    @Test
+    fun appBarStaysPinnedWhileTheFeedScrolls() {
+        val many =
+            (1..30).map { i ->
+                UserUi(100L + i, "Person $i", "person$i@example.com", "P$i", true, RelativeTime.Minutes(i), false)
+            }
+        state.value = UsersState(users = many, content = FeedContent.Users)
+        setContent()
+        val titleBefore = composeRule.onNodeWithText("Users").getUnclippedBoundsInRoot()
+
+        repeat(3) { composeRule.onRoot().performTouchInput { swipeUp(startY = bottom * 0.8f, endY = bottom * 0.2f) } }
+
+        composeRule.onAllNodesWithText("Person 1").assertCountEquals(0)
+        val titleAfter = composeRule.onNodeWithText("Users").assertIsDisplayed().getUnclippedBoundsInRoot()
+        assertEquals(titleBefore, titleAfter)
+    }
+
+    /**
+     * The two-pane default selection (spec: adaptive-layout, "First user selected by default") as the feed renders it:
+     * the ViewModel's `selectedUserId` falls back to the first user, and that card is marked selected.
+     *
+     * Limitation: `UsersListDetailRoot` sizes its panes from the real window, which a device test cannot force to the
+     * expanded class, so the root's "detail pane shows the first user without a tap" behaviour is covered by the
+     * ViewModel tests for `defaultSelectedUserId` and checked manually on a tablet emulator.
+     */
+    @Test
+    fun defaultSelectionHighlightsTheFirstCard() {
+        state.value =
+            UsersState(
+                users = listOf(jane, rahul),
+                content = FeedContent.Users,
+                selectedUserId = jane.id,
+                defaultSelectedUserId = jane.id,
+            )
+        setContent()
+
+        composeRule.onNodeWithText("Jane Doe").assertIsSelected()
+        composeRule.onNodeWithText("Rahul Sharma").assert(SemanticsMatcher.keyNotDefined(SemanticsProperties.Selected))
+    }
+
+    @Test
+    fun dialogHasACloseIconAndNoCancelTextButton() {
+        setContent()
+        composeRule.onNodeWithText("Jane Doe").performTouchInput { longClick() }
+
+        composeRule.onNodeWithContentDescription("Cancel").assertIsDisplayed()
+        composeRule.onAllNodesWithText("Cancel").assertCountEquals(0)
+    }
+
+    @Test
+    fun deleteButtonConfirms() {
+        setContent()
+        composeRule.onNodeWithText("Jane Doe").performTouchInput { longClick() }
+
+        composeRule.onNodeWithText("Delete").assertIsDisplayed().performClick()
+
+        composeRule.runOnIdle { assertEquals(UsersAction.OnDeleteConfirm, actions.last()) }
     }
 }

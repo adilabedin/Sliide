@@ -7,6 +7,7 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsNotSelected
@@ -19,6 +20,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.unit.dp
 import com.androidlearning.sliide.core.designsystem.theme.SliideTheme
 import com.androidlearning.sliide.users.domain.model.Gender
 import com.androidlearning.sliide.users.domain.model.UserStatus
@@ -26,6 +28,7 @@ import com.androidlearning.sliide.users.presentation.generated.resources.Res
 import com.androidlearning.sliide.users.presentation.generated.resources.validation_email_invalid
 import com.androidlearning.sliide.users.presentation.util.RelativeTime
 import com.androidlearning.sliide.users.presentation.util.UiText
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -39,6 +42,9 @@ class ProfileScreenTest {
     private val form = ProfileForm("Jane Doe", "jane.doe@example.com", Gender.FEMALE, UserStatus.ACTIVE)
     private val actions = mutableListOf<ProfileAction>()
     private val state = mutableStateOf(ProfileState(mode = ProfileMode.VIEW, header = header, form = form))
+
+    private var showBackButton = true
+    private var backClicks = 0
 
     private val nameFieldMatcher =
         SemanticsMatcher.expectValue(SemanticsProperties.EditableText, AnnotatedString("Jane Doe"))
@@ -59,8 +65,8 @@ class ProfileScreenTest {
                                 else -> current
                             }
                     },
-                    showBackButton = true,
-                    onBackClick = {},
+                    showBackButton = showBackButton,
+                    onBackClick = { backClicks++ },
                     snackbarHostState = remember { SnackbarHostState() },
                 )
             }
@@ -131,5 +137,37 @@ class ProfileScreenTest {
 
         composeRule.onAllNodesWithText("Delete").assertCountEquals(0)
         composeRule.onNodeWithText("New user").assertIsDisplayed()
+    }
+
+    @Test
+    fun createModeShowsBackArrowNotClose() {
+        // Two-pane layout: View mode would have no navigation icon, but Create always shows a back arrow.
+        showBackButton = false
+        state.value = ProfileState(mode = ProfileMode.CREATE)
+        setContent()
+
+        composeRule.onNodeWithContentDescription("Back").assertIsDisplayed()
+        composeRule.onAllNodesWithContentDescription("Cancel editing").assertCountEquals(0)
+    }
+
+    @Test
+    fun backArrowInCreateLeavesWithoutSaving() {
+        state.value = ProfileState(mode = ProfileMode.CREATE, form = ProfileForm(name = "Ada"))
+        setContent()
+
+        composeRule.onNodeWithContentDescription("Back").performClick()
+
+        composeRule.runOnIdle {
+            assertEquals(1, backClicks)
+            assertTrue(actions.none { it == ProfileAction.OnSaveClick })
+        }
+    }
+
+    @Test
+    fun saveButtonIsAtLeast48dpTall() {
+        state.value = ProfileState(mode = ProfileMode.CREATE)
+        setContent()
+
+        composeRule.onNodeWithText("Save").assertIsDisplayed().assertHeightIsAtLeast(48.dp)
     }
 }

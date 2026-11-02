@@ -1,5 +1,6 @@
-package com.androidlearning.sliide.users.presentation.users
+package com.androidlearning.sliide.users.presentation.composables
 
+import com.androidlearning.sliide.users.presentation.users.UserUi
 import com.androidlearning.sliide.users.presentation.util.RelativeTime
 
 /** Realistic sample data for previews only. */

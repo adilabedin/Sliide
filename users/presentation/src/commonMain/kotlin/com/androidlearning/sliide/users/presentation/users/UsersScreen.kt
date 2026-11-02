@@ -18,20 +18,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.LargeTopAppBar
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Snackbar
-import androidx.compose.material3.SnackbarDuration
-import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
-import androidx.compose.material3.SnackbarVisuals
-import androidx.compose.material3.SwipeToDismissBox
-import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
-import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -45,15 +37,17 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.androidlearning.sliide.core.designsystem.component.ErrorBanner
 import com.androidlearning.sliide.core.designsystem.component.FullScreenMessage
 import com.androidlearning.sliide.core.designsystem.component.SliideFab
-import com.androidlearning.sliide.core.designsystem.component.UndoSnackbar
-import com.androidlearning.sliide.core.designsystem.component.rememberCountdownFraction
 import com.androidlearning.sliide.core.designsystem.layout.DeviceConfiguration
 import com.androidlearning.sliide.core.designsystem.layout.currentDeviceConfiguration
-import com.androidlearning.sliide.core.designsystem.theme.SliideShapes
 import com.androidlearning.sliide.core.designsystem.theme.SliideSpacing
 import com.androidlearning.sliide.core.designsystem.theme.SliideTheme
-import com.androidlearning.sliide.core.designsystem.theme.extendedColors
-import com.androidlearning.sliide.users.presentation.delete.DeleteUserDialog
+import com.androidlearning.sliide.users.presentation.composables.DeleteUserDialog
+import com.androidlearning.sliide.users.presentation.composables.UndoSnackbarVisuals
+import com.androidlearning.sliide.users.presentation.composables.UsersFeed
+import com.androidlearning.sliide.users.presentation.composables.UsersFeedPlaceholders
+import com.androidlearning.sliide.users.presentation.composables.UsersSnackbarHost
+import com.androidlearning.sliide.users.presentation.composables.UsersTopAppBar
+import com.androidlearning.sliide.users.presentation.composables.previewUsers
 import com.androidlearning.sliide.users.presentation.generated.resources.Res
 import com.androidlearning.sliide.users.presentation.generated.resources.delete_snackbar_message
 import com.androidlearning.sliide.users.presentation.generated.resources.delete_snackbar_undo
@@ -66,8 +60,6 @@ import com.androidlearning.sliide.users.presentation.generated.resources.users_e
 import com.androidlearning.sliide.users.presentation.generated.resources.users_loading
 import com.androidlearning.sliide.users.presentation.generated.resources.users_retry
 import com.androidlearning.sliide.users.presentation.generated.resources.users_title
-import com.androidlearning.sliide.users.presentation.users.components.UsersFeed
-import com.androidlearning.sliide.users.presentation.users.components.UsersFeedPlaceholders
 import com.androidlearning.sliide.users.presentation.util.ObserveAsEvents
 import com.androidlearning.sliide.users.presentation.util.UiText
 import kotlinx.coroutines.launch
@@ -129,7 +121,8 @@ fun UsersScreen(
     currentTime: () -> Instant = { Clock.System.now() },
 ) {
     val columns = if (currentDeviceConfiguration() == DeviceConfiguration.MEDIUM) 2 else 1
-    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+    // Pinned: the bar never moves or resizes; it only tints while the lazy feed scrolls beneath it (spec: user-feed).
+    val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
     val fabExpanded by remember(listState, gridState) {
         derivedStateOf { listState.firstVisibleItemIndex == 0 && gridState.firstVisibleItemIndex == 0 }
     }
@@ -140,14 +133,9 @@ fun UsersScreen(
         modifier = modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            LargeTopAppBar(
-                title = { Text(text = stringResource(Res.string.users_title)) },
+            UsersTopAppBar(
+                title = stringResource(Res.string.users_title),
                 scrollBehavior = scrollBehavior,
-                colors =
-                    TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.background,
-                        scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer,
-                    ),
             )
         },
         floatingActionButton = {
@@ -234,18 +222,6 @@ fun UsersScreen(
     }
 }
 
-/** Snackbar data for an Undo window. Shown indefinitely: the controller's timer, not the host, ends the window. */
-private class UndoSnackbarVisuals(
-    override val message: String,
-    override val actionLabel: String,
-    val userId: Long,
-    val deadline: Instant,
-    val windowMillis: Long,
-) : SnackbarVisuals {
-    override val withDismissAction: Boolean = false
-    override val duration: SnackbarDuration = SnackbarDuration.Indefinite
-}
-
 /**
  * Shows the Undo snackbar while [pendingDelete] is open (design D4). The effect is keyed by user id: when the window
  * closes elsewhere (timer, newer delete) the effect is cancelled, which removes the snackbar without sending a result.
@@ -275,43 +251,6 @@ private fun UndoSnackbarEffect(
         when (result) {
             SnackbarResult.ActionPerformed -> onAction(UsersAction.OnUndoDelete(pendingDelete.userId))
             SnackbarResult.Dismissed -> onAction(UsersAction.OnCommitDelete(pendingDelete.userId))
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun UsersSnackbarHost(
-    hostState: SnackbarHostState,
-    currentTime: () -> Instant,
-) {
-    SnackbarHost(hostState = hostState) { data ->
-        val visuals = data.visuals
-        if (visuals is UndoSnackbarVisuals) {
-            val remaining = (visuals.deadline - currentTime()).inWholeMilliseconds.coerceAtLeast(0)
-            val fraction = rememberCountdownFraction(visuals.userId, remaining, visuals.windowMillis)
-            val dismissState = rememberSwipeToDismissBoxState()
-            SwipeToDismissBox(
-                state = dismissState,
-                backgroundContent = {},
-                onDismiss = { data.dismiss() },
-            ) {
-                UndoSnackbar(
-                    message = visuals.message,
-                    actionLabel = visuals.actionLabel,
-                    onAction = data::performAction,
-                    countdownFraction = fraction,
-                )
-            }
-        } else {
-            Snackbar(
-                snackbarData = data,
-                modifier = Modifier.padding(horizontal = SliideSpacing.l, vertical = SliideSpacing.s),
-                shape = SliideShapes.large,
-                containerColor = MaterialTheme.colorScheme.inverseSurface,
-                contentColor = MaterialTheme.colorScheme.inverseOnSurface,
-                actionColor = MaterialTheme.extendedColors.inverseAccent,
-            )
         }
     }
 }
