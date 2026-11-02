@@ -45,16 +45,16 @@ class KtorUserApiClient(
         }
     }
 
-    override suspend fun create(details: UserDetails): Result<RemoteUser, DataError.Remote> =
+    override suspend fun create(details: UserDetails): Result<RemoteUser, DataError> =
         httpClient.post<UserRequestDto, UserDto>(GoRestApi.USERS, details.toUserRequestDto()).toRemoteUser()
 
     override suspend fun update(
         id: Long,
         details: UserDetails,
-    ): Result<RemoteUser, DataError.Remote> =
+    ): Result<RemoteUser, DataError> =
         httpClient.patch<UserRequestDto, UserDto>(GoRestApi.user(id), details.toUserRequestDto()).toRemoteUser()
 
-    override suspend fun delete(id: Long): EmptyResult<DataError.Remote> = httpClient.delete(GoRestApi.user(id))
+    override suspend fun delete(id: Long): EmptyResult<DataError> = httpClient.delete(GoRestApi.user(id))
 
     private fun pageQuery(page: Int): Map<String, Any> =
         mapOf(GoRestApi.Query.PAGE to page, GoRestApi.Query.PER_PAGE to GoRestApi.PAGE_SIZE)
@@ -62,7 +62,7 @@ class KtorUserApiClient(
     private fun List<UserDto>.toRemoteUsers(): Result<List<RemoteUser>, DataError.Remote> =
         toRemoteUsersOrNull()?.let { Result.Success(it) } ?: Result.Failure(DataError.Remote.SERIALIZATION)
 
-    private fun Result<UserDto, DataError.Remote>.toRemoteUser(): Result<RemoteUser, DataError.Remote> =
+    private fun Result<UserDto, DataError>.toRemoteUser(): Result<RemoteUser, DataError> =
         when (this) {
             is Result.Failure -> this
             is Result.Success ->

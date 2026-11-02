@@ -130,22 +130,38 @@ class OfflineFirstUserRepositoryWriteTest {
     fun createRejectedWithValidationErrorRollsBackAndIsNotQueued() =
         runTest {
             val h = RepositoryHarness(backgroundScope)
-            h.apiClient.createResults += Result.Failure(DataError.Remote.VALIDATION)
+            h.apiClient.createResults += Result.Failure(emailTaken)
 
             val result = h.repository.createUser(details())
 
-            assertThat(result).isEqualTo(Result.Failure(DataError.Remote.VALIDATION))
+            assertThat(result).isEqualTo(Result.Failure(emailTaken))
             assertThat(h.userDao.users).isEmpty()
             assertThat(h.pendingSyncDao.entries).isEmpty()
         }
 
     @Test
-    fun createRejectedUnauthorisedIsNotQueued() =
+    fun createUnauthorisedIsQueuedAsAuthFailed() =
         runTest {
             val h = RepositoryHarness(backgroundScope)
             h.apiClient.createResults += Result.Failure(DataError.Remote.UNAUTHORIZED)
 
-            assertThat(h.repository.createUser(details())).isEqualTo(Result.Failure(DataError.Remote.UNAUTHORIZED))
+            assertThat(h.repository.createUser(details())).isEqualTo(Result.Success(WriteStatus.QUEUED_AUTH_FAILED))
+            assertThat(h.userDao.getById(-1)?.name).isEqualTo("Jane Doe")
+            assertThat(
+                h.pendingSyncDao.entries
+                    .single()
+                    .operation,
+            ).isEqualTo(PendingOperation.CREATE)
+        }
+
+    @Test
+    fun createAnswered404RollsBackAndIsNotQueued() =
+        runTest {
+            val h = RepositoryHarness(backgroundScope)
+            h.apiClient.createResults += Result.Failure(DataError.Remote.NOT_FOUND)
+
+            assertThat(h.repository.createUser(details())).isEqualTo(Result.Failure(DataError.Remote.NOT_FOUND))
+            assertThat(h.userDao.users).isEmpty()
             assertThat(h.pendingSyncDao.entries).isEmpty()
         }
 
@@ -186,17 +202,21 @@ class OfflineFirstUserRepositoryWriteTest {
         }
 
     @Test
-    fun updateRejectedRestoresPreviousDataAndIsNotQueued() =
+    fun updateRejectedDropsEntryAndKeepsEditUntilRefresh() =
         runTest {
             val h = RepositoryHarness(backgroundScope)
             val original = h.seedUser(userEntity(42, name = "Old"))
-            h.apiClient.updateResults += Result.Failure(DataError.Remote.VALIDATION)
+            h.apiClient.updateResults += Result.Failure(emailTaken)
 
             val result = h.repository.updateUser(original.toUser().copy(name = "New"))
 
-            assertThat(result).isEqualTo(Result.Failure(DataError.Remote.VALIDATION))
-            assertThat(h.userDao.getById(42)).isEqualTo(original)
+            assertThat(result).isEqualTo(Result.Failure(emailTaken))
+            assertThat(h.userDao.getById(42)?.name).isEqualTo("New")
             assertThat(h.pendingSyncDao.entries).isEmpty()
+
+            h.apiClient.defaultFetchLastPageResult = Result.Success(listOf(remoteUser(42, name = "Old")))
+            h.repository.refresh()
+            assertThat(h.userDao.getById(42)?.name).isEqualTo("Old")
         }
 
     @Test
@@ -223,6 +243,42 @@ class OfflineFirstUserRepositoryWriteTest {
 
             assertThat(result).isEqualTo(Result.Failure(DataError.Local.NOT_FOUND))
             assertThat(h.apiClient.requests).isEmpty()
+        }
+
+    @Test
+    fun updateUnauthorisedKeepsEditAndIsQueuedAsAuthFailed() =
+        runTest {
+            val h = RepositoryHarness(backgroundScope)
+            val original = h.seedUser(userEntity(42, name = "Old"))
+            h.apiClient.updateResults += Result.Failure(DataError.Remote.UNAUTHORIZED)
+
+            val result = h.repository.updateUser(original.toUser().copy(name = "New"))
+
+            assertThat(result).isEqualTo(Result.Success(WriteStatus.QUEUED_AUTH_FAILED))
+            assertThat(h.userDao.getById(42)?.name).isEqualTo("New")
+            assertThat(
+                h.pendingSyncDao.entries
+                    .single()
+                    .operation,
+            ).isEqualTo(PendingOperation.UPDATE)
+        }
+
+    @Test
+    fun updateOnServerUnavailableKeepsEditAndIsQueued() =
+        runTest {
+            val h = RepositoryHarness(backgroundScope)
+            val original = h.seedUser(userEntity(42, name = "Old"))
+            h.apiClient.updateResults += Result.Failure(DataError.Remote.SERVER_ERROR)
+
+            val result = h.repository.updateUser(original.toUser().copy(name = "New"))
+
+            assertThat(result).isEqualTo(Result.Success(WriteStatus.QUEUED))
+            assertThat(h.userDao.getById(42)?.name).isEqualTo("New")
+            assertThat(
+                h.pendingSyncDao.entries
+                    .single()
+                    .operation,
+            ).isEqualTo(PendingOperation.UPDATE)
         }
 
     @Test
@@ -373,17 +429,69 @@ class OfflineFirstUserRepositoryWriteTest {
         }
 
     @Test
-    fun finalizeDeleteRejectedRestoresUserAndIsNotQueued() =
+    fun finalizeDeleteRefusedDropsEntryAndRefreshBringsTheUserBack() =
         runTest {
             val h = RepositoryHarness(backgroundScope)
             val original = h.seedUser(userEntity(42))
             h.repository.removeUserLocally(42)
-            h.apiClient.deleteResults += Result.Failure(DataError.Remote.UNAUTHORIZED)
+            h.apiClient.deleteResults += Result.Failure(DataError.Validation(emptyList()))
 
             val result = h.repository.finalizeDelete(original.toUser())
 
-            assertThat(result).isEqualTo(Result.Failure(DataError.Remote.UNAUTHORIZED))
-            assertThat(h.userDao.getById(42)).isEqualTo(original)
+            assertThat(result).isEqualTo(Result.Failure(DataError.Validation(emptyList())))
+            assertThat(h.userDao.getById(42)).isNull()
+            assertThat(h.pendingSyncDao.entries).isEmpty()
+
+            h.apiClient.defaultFetchLastPageResult = Result.Success(listOf(remoteUser(42)))
+            h.repository.refresh()
+            assertThat(h.userDao.getById(42)?.id).isEqualTo(42L)
+        }
+
+    @Test
+    fun finalizeDeleteUnauthorisedKeepsUserRemovedAndIsQueuedAsAuthFailed() =
+        runTest {
+            val h = RepositoryHarness(backgroundScope)
+            val user = h.seedUser(userEntity(42)).toUser()
+            h.repository.removeUserLocally(42)
+            h.apiClient.deleteResults += Result.Failure(DataError.Remote.UNAUTHORIZED)
+
+            assertThat(h.repository.finalizeDelete(user)).isEqualTo(Result.Success(WriteStatus.QUEUED_AUTH_FAILED))
+            assertThat(h.userDao.getById(42)).isNull()
+            assertThat(
+                h.pendingSyncDao.entries
+                    .single()
+                    .operation,
+            ).isEqualTo(PendingOperation.DELETE)
+        }
+
+    @Test
+    fun finalizeDeleteOnServerUnavailableIsQueued() =
+        runTest {
+            val h = RepositoryHarness(backgroundScope)
+            val user = h.seedUser(userEntity(42)).toUser()
+            h.repository.removeUserLocally(42)
+            h.apiClient.deleteResults += Result.Failure(DataError.Remote.SERVER_ERROR)
+
+            assertThat(h.repository.finalizeDelete(user)).isEqualTo(Result.Success(WriteStatus.QUEUED))
+            assertThat(h.userDao.getById(42)).isNull()
+            assertThat(
+                h.pendingSyncDao.entries
+                    .single()
+                    .operation,
+            ).isEqualTo(PendingOperation.DELETE)
+        }
+
+    @Test
+    fun finalizeDeleteWithUnexpectedStatusDropsEntryOnly() =
+        runTest {
+            val h = RepositoryHarness(backgroundScope)
+            val original = h.seedUser(userEntity(42))
+            h.repository.removeUserLocally(42)
+            h.apiClient.deleteResults += Result.Failure(DataError.Remote.UNKNOWN)
+
+            assertThat(h.repository.finalizeDelete(original.toUser()))
+                .isEqualTo(Result.Failure(DataError.Remote.UNKNOWN))
+            assertThat(h.userDao.getById(42)).isNull()
             assertThat(h.pendingSyncDao.entries).isEmpty()
         }
 

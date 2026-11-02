@@ -4,7 +4,9 @@ import assertk.assertThat
 import assertk.assertions.isEqualTo
 import assertk.assertions.isInstanceOf
 import com.androidlearning.sliide.core.domain.util.DataError
+import com.androidlearning.sliide.core.domain.util.FieldError
 import com.androidlearning.sliide.core.domain.util.Result
+import io.ktor.client.HttpClient
 import io.ktor.client.network.sockets.SocketTimeoutException
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.request.HttpRequestData
@@ -16,6 +18,13 @@ import kotlin.test.Test
 import kotlin.test.assertFailsWith
 
 class HttpClientExtTest {
+    private val writes: Map<String, suspend HttpClient.() -> Result<*, DataError>> =
+        mapOf(
+            "POST" to { post<TestDto, TestDto>("users", TestDto(1)) },
+            "PATCH" to { patch<TestDto, TestDto>("users/1", TestDto(1)) },
+            "DELETE" to { delete("users/1") },
+        )
+
     @Test
     fun statusCodesMapToRemoteErrors() =
         runTest {
@@ -25,7 +34,6 @@ class HttpClientExtTest {
                     403 to DataError.Remote.UNAUTHORIZED,
                     404 to DataError.Remote.NOT_FOUND,
                     408 to DataError.Remote.REQUEST_TIMEOUT,
-                    422 to DataError.Remote.VALIDATION,
                     429 to DataError.Remote.TOO_MANY_REQUESTS,
                     500 to DataError.Remote.SERVER_ERROR,
                     503 to DataError.Remote.SERVER_ERROR,
@@ -39,6 +47,56 @@ class HttpClientExtTest {
                 assertThat(mock.client.patch<TestDto, TestDto>("users/1", TestDto(1)), "PATCH $code").isEqualTo(Result.Failure(error))
                 assertThat(mock.client.delete("users/1"), "DELETE $code").isEqualTo(Result.Failure(error))
             }
+        }
+
+    @Test
+    fun unprocessableEntityOnAWriteKeepsGoRestsFieldErrorsInOrder() =
+        runTest {
+            val body = """[{"field":"email","message":"has already been taken"},{"field":"name","message":"can't be blank"}]"""
+            val mock = MockClient { respondJson(body, status = HttpStatusCode.UnprocessableEntity) }
+            val expected =
+                Result.Failure(
+                    DataError.Validation(listOf(FieldError("email", "has already been taken"), FieldError("name", "can't be blank"))),
+                )
+
+            writes.forEach { (name, call) -> assertThat(mock.client.call(), name).isEqualTo(expected) }
+        }
+
+    @Test
+    fun unprocessableEntityWithOneFieldAndUnknownKeys() =
+        runTest {
+            val mock =
+                MockClient {
+                    respondJson("""[{"field":"email","message":"is invalid","code":7}]""", status = HttpStatusCode.UnprocessableEntity)
+                }
+
+            writes.forEach { (name, call) ->
+                assertThat(
+                    mock.client.call(),
+                    name,
+                ).isEqualTo(Result.Failure(DataError.Validation(listOf(FieldError("email", "is invalid")))))
+            }
+        }
+
+    @Test
+    fun unreadableUnprocessableEntityBodiesAreValidationWithNoFields() =
+        runTest {
+            listOf("", "   ", "<html>oops</html>", """{"message":"rejected"}""", "[1,2]", """[{"message":"no field"}]""").forEach { body ->
+                val mock = MockClient { respondJson(body, status = HttpStatusCode.UnprocessableEntity) }
+
+                writes.forEach { (name, call) ->
+                    assertThat(mock.client.call(), "$name body=$body").isEqualTo(Result.Failure(DataError.Validation(emptyList())))
+                }
+            }
+        }
+
+    @Test
+    fun unprocessableEntityOnAReadIsUnknown() =
+        runTest {
+            val mock =
+                MockClient { respondJson("""[{"field":"page","message":"is invalid"}]""", status = HttpStatusCode.UnprocessableEntity) }
+
+            assertThat(mock.client.get<TestDto>("users")).isEqualTo(Result.Failure(DataError.Remote.UNKNOWN))
         }
 
     @Test

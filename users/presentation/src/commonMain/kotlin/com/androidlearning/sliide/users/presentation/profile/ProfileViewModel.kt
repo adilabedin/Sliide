@@ -18,11 +18,11 @@ import com.androidlearning.sliide.users.presentation.delete.DeleteUndoController
 import com.androidlearning.sliide.users.presentation.generated.resources.Res
 import com.androidlearning.sliide.users.presentation.generated.resources.profile_no_longer_available
 import com.androidlearning.sliide.users.presentation.generated.resources.profile_saved_offline
-import com.androidlearning.sliide.users.presentation.generated.resources.validation_email_in_use
 import com.androidlearning.sliide.users.presentation.generated.resources.validation_email_invalid
 import com.androidlearning.sliide.users.presentation.generated.resources.validation_email_required
 import com.androidlearning.sliide.users.presentation.generated.resources.validation_name_required
 import com.androidlearning.sliide.users.presentation.generated.resources.validation_name_too_short
+import com.androidlearning.sliide.users.presentation.generated.resources.write_queued_auth_failed
 import com.androidlearning.sliide.users.presentation.users.initialsOf
 import com.androidlearning.sliide.users.presentation.util.UiText
 import com.androidlearning.sliide.users.presentation.util.relativeAddedTime
@@ -63,9 +63,6 @@ class ProfileViewModel(
     private var observeJob: Job? = null
     private var deletingOwnUser = false
 
-    /** Set after a server VALIDATION rejection; cleared as soon as the email changes. */
-    private var serverEmailError: UiText? = null
-
     private var nameTouched: Boolean
         get() = savedStateHandle[KEY_NAME_TOUCHED] ?: false
         set(value) {
@@ -92,10 +89,7 @@ class ProfileViewModel(
             ProfileAction.OnEditClick -> if (_state.value.mode == ProfileMode.VIEW && original != null) setMode(ProfileMode.EDIT)
             ProfileAction.OnCancelEdit -> cancelEdit()
             is ProfileAction.OnNameChange -> editForm(nameChanged = true) { it.copy(name = action.name) }
-            is ProfileAction.OnEmailChange -> {
-                serverEmailError = null
-                editForm(emailChanged = true) { it.copy(email = action.email) }
-            }
+            is ProfileAction.OnEmailChange -> editForm(emailChanged = true) { it.copy(email = action.email) }
             is ProfileAction.OnGenderChange -> editForm { it.copy(gender = action.gender) }
             is ProfileAction.OnStatusChange -> editForm { it.copy(status = action.status) }
             ProfileAction.OnSaveClick -> save()
@@ -114,7 +108,6 @@ class ProfileViewModel(
         openKey = key
         original = null
         deletingOwnUser = false
-        serverEmailError = null
         savedStateHandle[KEY_TARGET] = key
 
         if (key == ProfileKey.CREATE) {
@@ -166,7 +159,6 @@ class ProfileViewModel(
         observeJob?.cancel()
         original = null
         deletingOwnUser = false
-        serverEmailError = null
         nameTouched = false
         emailTouched = false
         clearTarget()
@@ -178,7 +170,6 @@ class ProfileViewModel(
         if (_state.value.mode != ProfileMode.EDIT) return
         nameTouched = false
         emailTouched = false
-        serverEmailError = null
         setState(mode = ProfileMode.VIEW, header = _state.value.header, form = user.toForm())
     }
 
@@ -223,8 +214,7 @@ class ProfileViewModel(
         when (result) {
             is Result.Success -> {
                 clearTarget()
-                val message = if (result.data == WriteStatus.QUEUED) UiText.Resource(Res.string.profile_saved_offline) else null
-                send(ProfileEvent.Created(message))
+                send(ProfileEvent.Created(result.data.queuedMessage()))
             }
             is Result.Failure -> onSaveFailure(result.error)
         }
@@ -240,25 +230,29 @@ class ProfileViewModel(
                 nameTouched = false
                 emailTouched = false
                 setState(mode = ProfileMode.VIEW, header = _state.value.header, form = updated.toForm(), isSaving = false)
-                if (result.data == WriteStatus.QUEUED) {
-                    send(ProfileEvent.ShowMessage(UiText.Resource(Res.string.profile_saved_offline)))
-                }
+                result.data.queuedMessage()?.let { send(ProfileEvent.ShowMessage(it)) }
             }
             is Result.Failure -> onSaveFailure(result.error)
         }
     }
 
-    /** A rejected save keeps the input; a server validation rejection is shown under the email field. */
+    /**
+     * A rejected save keeps the input and shows why in a snackbar (spec: user-profile). Server field errors are shown
+     * as sent ("Email has already been taken"); the ViewModel does not interpret or place them.
+     */
     private fun onSaveFailure(error: DataError) {
         val current = _state.value
-        if (error == DataError.Remote.VALIDATION) {
-            serverEmailError = UiText.Resource(Res.string.validation_email_in_use)
-            emailTouched = true
-        } else {
-            send(ProfileEvent.ShowMessage(error.toUiText()))
-        }
+        send(ProfileEvent.ShowMessage(error.toUiText()))
         setState(mode = current.mode, header = current.header, form = current.form, isSaving = false)
     }
+
+    /** Why an accepted write was queued, or null when it reached the server. */
+    private fun WriteStatus.queuedMessage(): UiText? =
+        when (this) {
+            WriteStatus.SYNCED -> null
+            WriteStatus.QUEUED -> UiText.Resource(Res.string.profile_saved_offline)
+            WriteStatus.QUEUED_AUTH_FAILED -> UiText.Resource(Res.string.write_queued_auth_failed)
+        }
 
     private fun confirmDelete() {
         val user = original ?: return
@@ -287,14 +281,12 @@ class ProfileViewModel(
                 header = header,
                 form = form,
                 nameError = nameError?.takeIf { showErrors || nameTouched }?.toUiText(),
-                emailError =
-                    serverEmailError ?: emailError?.takeIf { showErrors || emailTouched }?.toUiText(),
+                emailError = emailError?.takeIf { showErrors || emailTouched }?.toUiText(),
                 isSaving = isSaving,
                 canSave =
                     !isSaving &&
                         nameError == null &&
                         emailError == null &&
-                        serverEmailError == null &&
                         when (mode) {
                             ProfileMode.CREATE -> true
                             ProfileMode.EDIT -> changed

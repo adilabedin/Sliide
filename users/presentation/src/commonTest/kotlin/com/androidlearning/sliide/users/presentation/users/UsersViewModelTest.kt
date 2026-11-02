@@ -9,6 +9,7 @@ import assertk.assertions.isNull
 import assertk.assertions.isTrue
 import com.androidlearning.sliide.core.domain.util.DataError
 import com.androidlearning.sliide.core.domain.util.Result
+import com.androidlearning.sliide.users.domain.model.WriteStatus
 import com.androidlearning.sliide.users.presentation.delete.DeleteUndoController
 import com.androidlearning.sliide.users.presentation.fake.FakeUserRepository
 import com.androidlearning.sliide.users.presentation.fake.SchedulerClock
@@ -18,7 +19,9 @@ import com.androidlearning.sliide.users.presentation.fake.pendingAmelie
 import com.androidlearning.sliide.users.presentation.fake.rahul
 import com.androidlearning.sliide.users.presentation.generated.resources.Res
 import com.androidlearning.sliide.users.presentation.generated.resources.delete_failed
+import com.androidlearning.sliide.users.presentation.generated.resources.delete_refused
 import com.androidlearning.sliide.users.presentation.generated.resources.error_no_internet
+import com.androidlearning.sliide.users.presentation.generated.resources.write_queued_auth_failed
 import com.androidlearning.sliide.users.presentation.util.RelativeTime
 import com.androidlearning.sliide.users.presentation.util.UiText
 import kotlinx.coroutines.CompletableDeferred
@@ -288,9 +291,29 @@ class UsersViewModelTest {
         }
 
     @Test
-    fun failedFinaliseIsShownAsAMessage() =
+    fun refusedFinaliseSaysTheServerRefused() =
         runTest {
-            repository.finalizeResult = Result.Failure(DataError.Remote.UNAUTHORIZED)
+            repository.finalizeResult = Result.Failure(DataError.Validation(emptyList()))
+            val (viewModel) = viewModel()
+            viewModel.state.test {
+                repository.emit(listOf(jane))
+                viewModel.events.test {
+                    viewModel.onAction(UsersAction.OnDeleteRequest(jane.id))
+                    viewModel.onAction(UsersAction.OnDeleteConfirm)
+                    advanceTimeBy(6.seconds)
+
+                    assertThat(awaitItem()).isEqualTo(
+                        UsersEvent.ShowMessage(UiText.Resource(Res.string.delete_refused, listOf("Jane Doe"))),
+                    )
+                }
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
+
+    @Test
+    fun finaliseWithUnexpectedStatusSaysTheUserCouldNotBeDeleted() =
+        runTest {
+            repository.finalizeResult = Result.Failure(DataError.Remote.UNKNOWN)
             val (viewModel) = viewModel()
             viewModel.state.test {
                 repository.emit(listOf(jane))
@@ -301,6 +324,26 @@ class UsersViewModelTest {
 
                     assertThat(awaitItem()).isEqualTo(
                         UsersEvent.ShowMessage(UiText.Resource(Res.string.delete_failed, listOf("Jane Doe"))),
+                    )
+                }
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
+
+    @Test
+    fun unauthorisedFinaliseSaysItWillRetry() =
+        runTest {
+            repository.finalizeResult = Result.Success(WriteStatus.QUEUED_AUTH_FAILED)
+            val (viewModel) = viewModel()
+            viewModel.state.test {
+                repository.emit(listOf(jane))
+                viewModel.events.test {
+                    viewModel.onAction(UsersAction.OnDeleteRequest(jane.id))
+                    viewModel.onAction(UsersAction.OnDeleteConfirm)
+                    advanceTimeBy(6.seconds)
+
+                    assertThat(awaitItem()).isEqualTo(
+                        UsersEvent.ShowMessage(UiText.Resource(Res.string.write_queued_auth_failed)),
                     )
                 }
                 cancelAndIgnoreRemainingEvents()

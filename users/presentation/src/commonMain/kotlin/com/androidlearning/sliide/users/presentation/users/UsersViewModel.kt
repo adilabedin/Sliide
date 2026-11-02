@@ -11,6 +11,8 @@ import com.androidlearning.sliide.users.presentation.delete.DeleteUndoController
 import com.androidlearning.sliide.users.presentation.delete.PendingDelete
 import com.androidlearning.sliide.users.presentation.generated.resources.Res
 import com.androidlearning.sliide.users.presentation.generated.resources.delete_failed
+import com.androidlearning.sliide.users.presentation.generated.resources.delete_refused
+import com.androidlearning.sliide.users.presentation.generated.resources.write_queued_auth_failed
 import com.androidlearning.sliide.users.presentation.util.UiText
 import com.androidlearning.sliide.users.presentation.util.toUiText
 import kotlinx.coroutines.Job
@@ -123,8 +125,12 @@ class UsersViewModel(
         deleteUndoController.messages
             .onEach { message ->
                 when (message) {
-                    is DeleteMessage.FinalizeFailed ->
-                        send(UsersEvent.ShowMessage(UiText.Resource(Res.string.delete_failed, listOf(message.userName))))
+                    is DeleteMessage.FinalizeFailed -> {
+                        val text = if (message.error is DataError.Validation) Res.string.delete_refused else Res.string.delete_failed
+                        send(UsersEvent.ShowMessage(UiText.Resource(text, listOf(message.userName))))
+                    }
+                    is DeleteMessage.QueuedAuthFailed ->
+                        send(UsersEvent.ShowMessage(UiText.Resource(Res.string.write_queued_auth_failed)))
                 }
             }.launchIn(viewModelScope)
     }

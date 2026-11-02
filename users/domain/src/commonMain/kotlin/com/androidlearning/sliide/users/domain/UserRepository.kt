@@ -11,8 +11,9 @@ import kotlinx.coroutines.flow.Flow
 
 /**
  * Offline-first access to users. The local cache is the single source of truth: every write lands in it before
- * the network call, retryable network failures are queued for a later [syncPending], and permanent failures
- * roll the local write back and are returned to the caller.
+ * the network call. Failures that may later succeed (no connectivity, timeout, 5xx, 429, 401/403) are queued for a
+ * later [syncPending]. A rejected write loses its pending entry and returns the typed [DataError]; only a rejected
+ * create is also removed locally, and the next [refresh] corrects anything else.
  */
 interface UserRepository {
     /** Users from the local cache, newest first. Emits again whenever the cache changes. */
@@ -20,16 +21,18 @@ interface UserRepository {
 
     /**
      * Inserts the user locally under a temporary negative id, then creates it on the server.
-     * [WriteStatus.SYNCED]: re-keyed to the server id. [WriteStatus.QUEUED]: kept under the temp id and queued.
-     * Failure: a non-retryable error; the local insert is rolled back.
+     * [WriteStatus.SYNCED]: re-keyed to the server id. [WriteStatus.QUEUED] / [WriteStatus.QUEUED_AUTH_FAILED]: kept
+     * under the temp id and queued. Failure (e.g. [DataError.Validation]): the local insert is rolled back.
      */
     suspend fun createUser(details: UserDetails): Result<WriteStatus, DataError>
 
     /**
      * Writes the change locally, then updates it on the server. A user with a temporary id is never sent; the
      * change is merged into its pending create and returns [WriteStatus.QUEUED].
-     * Failure: a non-retryable error; the previous local data is restored, except for [DataError.Remote.NOT_FOUND],
-     * where the user no longer exists on the server and is removed from the cache along with any pending entry.
+     * A failure that may later succeed queues the change ([WriteStatus.QUEUED], or [WriteStatus.QUEUED_AUTH_FAILED]
+     * for 401/403). Failure: the pending entry is dropped and the edit stays in the cache until the next [refresh],
+     * except for [DataError.Remote.NOT_FOUND], where the user no longer exists on the server and is removed from the
+     * cache. An uncached user fails with [DataError.Local.NOT_FOUND].
      */
     suspend fun updateUser(user: User): Result<WriteStatus, DataError>
 
@@ -51,8 +54,10 @@ interface UserRepository {
 
     /**
      * Commits a delete after the Undo window. Sends DELETE for a server-known user (404 counts as success) or
-     * queues it on a retryable failure; a temp-id user just cancels its pending create without any network call.
-     * Failure: a non-retryable error; the user is restored locally.
+     * queues it on a failure that may later succeed (including 401/403, as [WriteStatus.QUEUED_AUTH_FAILED]); a
+     * temp-id user just cancels its pending create without any network call.
+     * Failure (e.g. [DataError.Validation], GoRest refusing the delete): the pending entry is dropped and the user stays
+     * removed until the next [refresh] brings it back.
      *
      * Ends the Undo window opened by [removeUserLocally]; call it instead of, never in addition to, [restoreUser].
      * Launch it in a scope that outlives the screen (an application-level scope, not `viewModelScope`): if it never
@@ -61,10 +66,10 @@ interface UserRepository {
     suspend fun finalizeDelete(user: User): Result<WriteStatus, DataError>
 
     /**
-     * Replays the pending queue oldest first, one entry at a time, stopping at the first retryable failure.
-     * Permanently rejected entries are dropped from the queue with their local effect resolved (a rejected create
-     * removes the temp user, an update whose user no longer exists removes it, a rejected delete restores the user)
-     * and counted in [SyncReport.rejected]; nothing else is recorded. Concurrent calls share one pass.
+     * Sends every pending entry once, oldest first, one at a time. An entry that fails in a way that may later succeed
+     * stays queued for the next sync and the pass carries on; the first such error is returned.
+     * A rejected entry is only deleted from the queue and counted in [SyncReport.rejected]; the cached users are left
+     * as they are until the next [refresh] replaces the list with the server's. Concurrent calls share one pass.
      */
     suspend fun syncPending(): Result<SyncReport, DataError.Remote>
 

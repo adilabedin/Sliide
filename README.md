@@ -37,7 +37,7 @@ Why this shape:
 ### HTTP stack (`:core:data`)
 
 One `HttpClient`, built by `HttpClientFactory` and shared through Koin. The contract is in
-[`openspec/changes/add-ktor-api-client`](./openspec/changes/add-ktor-api-client).
+[`openspec/changes/archive/2026-11-02-add-ktor-api-client`](./openspec/changes/archive/2026-11-02-add-ktor-api-client).
 
 - **Credentials at build time.** The `buildkonfig` convention plugin generates an `internal object BuildKonfig` with
   `BASE_URL` (`https://gorest.co.in/public/v2/`) and `API_TOKEN`. The token comes from `GOREST_API_TOKEN` in the
@@ -51,24 +51,29 @@ One `HttpClient`, built by `HttpClientFactory` and shared through Koin. The cont
 - **Routes are relative with no leading slash** (`"users"`, `"users/42"`). A leading `/` would replace the base path
   and drop `/public/v2`.
 - **Extensions** `HttpClient.get` (returns the body **and the response headers**, e.g. `X-Pagination-Pages`), `post`,
-  `patch` and `delete` (never decodes a body, so `204` succeeds). Each returns `Result<…, DataError.Remote>` and never
+  `patch` and `delete` (never decodes a body, so `204` succeeds). `get` returns `Result<…, DataError.Remote>`; the
+  write helpers return `Result<…, DataError>`, because a 422 carries GoRest's field errors (below). None of them
   throws, except for cancellation, which always propagates.
+- **422 on a write** is parsed from GoRest's body (`[{"field": "email", "message": "has already been taken"}]`, the
+  same format on every endpoint) into `DataError.Validation(fields)`, keeping fields and messages unchanged and in
+  order. A body that is empty, not JSON, not a list, or fails to read (at most 16 KB is read) gives
+  `Validation(emptyList())`, never a serialization error.
 
-How responses and exceptions map to `DataError.Remote`. Retryable errors are queued by the offline-first repository;
-the rest are returned to the caller.
+How the other responses and exceptions map to `DataError.Remote`. What a failed *write* then means (kept for later,
+rejected, already gone) is decided by the users feature, not here.
 
-| Outcome | `DataError.Remote` | Retryable |
-|---|---|---|
-| 2xx | success | — |
-| 401, 403 | `UNAUTHORIZED` | no |
-| 404 | `NOT_FOUND` | no (success for `DELETE`) |
-| 408, or a request / connect / socket timeout | `REQUEST_TIMEOUT` | yes |
-| 422 | `VALIDATION` | no |
-| 429 | `TOO_MANY_REQUESTS` | yes |
-| 5xx | `SERVER_ERROR` | yes |
-| Any other `IOException` (no connectivity, DNS failure, connection refused; OkHttp and Darwin alike) | `NO_INTERNET` | yes |
-| Malformed body | `SERIALIZATION` | no |
-| Anything else | `UNKNOWN` | no |
+| Outcome | `DataError.Remote` |
+|---|---|
+| 2xx | success |
+| 401, 403 | `UNAUTHORIZED` |
+| 404 | `NOT_FOUND` |
+| 408, or a request / connect / socket timeout | `REQUEST_TIMEOUT` |
+| 422 on a read (GoRest reads don't return it) | `UNKNOWN` |
+| 429 | `TOO_MANY_REQUESTS` |
+| 5xx | `SERVER_ERROR` |
+| Any other `IOException` (no connectivity, DNS failure, connection refused; OkHttp and Darwin alike) | `NO_INTERNET` |
+| Malformed body | `SERIALIZATION` |
+| Anything else | `UNKNOWN` |
 
 Timeouts are checked before the generic `IOException` case, because Ktor's timeout exceptions are themselves
 `IOException`s. Tests with the real engines confirm that a refused connection becomes `NO_INTERNET` on both
@@ -99,11 +104,17 @@ page is then returned as an empty list: the feed shows its empty state and the u
 Users go over the wire with lowercase `gender` (`male` / `female`) and `status` (`active` / `inactive`). Any other value
 fails the whole response with `SERIALIZATION`.
 
+**Write errors.** `create`, `update` and `delete` pass the HTTP stack's `DataError` through unchanged:
+`Validation(fields)` for a 422, `Remote.NOT_FOUND` for a 404, and the table above for everything else. A
+`Validation` on a `DELETE` means GoRest refused it (it does so while fewer than 100 seeded records remain); every
+consumer already knows which operation failed, so there is no separate type for it. The app never interprets the
+message text: the profile shows it as "<Field> <message>", e.g. "Email has already been taken".
+
 ### Offline-first sync
 
 Room is the single source of truth for the UI. Every write lands in the local cache first and reaches GoRest when it
 can. Writes that can't reach the server wait in an outbox. The full contract is in
-[`openspec/changes/add-offline-pending-sync`](./openspec/changes/add-offline-pending-sync).
+[`openspec/changes/archive/2026-11-02-add-offline-pending-sync`](./openspec/changes/archive/2026-11-02-add-offline-pending-sync).
 
 | Table | Holds |
 |---|---|
@@ -115,28 +126,53 @@ flowchart LR
     W[User write] --> L[Apply to users table]
     L --> R{API call}
     R -- 2xx --> S[Synced: clear any stale pending row]
-    R -- no internet / timeout / 5xx / 429 --> Q[Merge into pending_sync]
-    R -- 4xx --> X[Roll back locally, return error]
-    Q --> P[syncPending replay]
+    R -- failure --> O{OutboxPolicy}
+    O -- KEEP --> Q[Stays in pending_sync]
+    O -- REJECT --> X[Delete entry, return DataError]
+    O -- GONE --> G[Delete done / updated user removed]
+    Q --> P[syncPending: send each entry]
     P -- 2xx --> S
-    P -- no internet / timeout / 5xx / 429 --> K[Keep entry, stop, retry next sync]
-    P -- other errors --> D[Delete entry, resolve locally, continue]
+    P -- failure --> O2{OutboxPolicy}
+    O2 -- KEEP --> K[Keep entry for next sync, continue]
+    O2 -- REJECT / GONE --> D[Delete entry only, continue]
 ```
 
-**Which errors keep a write and which delete it.**
+**Writes are queued only on failure.** A create, edit or delete is written to the cache and sent straight away; only a
+failed request that is worth retrying writes (or merges into) the user's pending entry. A successful write never
+touches the queue, apart from clearing an older entry it supersedes. A write cut off by a killed process is lost, and
+the next refresh shows the server's data; that is accepted as too rare to cover (the user can make the change again).
 
-| Error | Direct write (user is on screen) | Queued write during replay |
+**One policy decides what happens to a failed write.** `OutboxPolicy.decide(operation, error)` is a pure function
+used by both the direct write and the replay, so the two paths can never disagree (a parity test runs the same
+failures through both). Every `when` in it is exhaustive with no `else`, so a new error value doesn't compile until
+it is classified, and one test covers every cell:
+
+| `DataError` | `CREATE` | `UPDATE` | `DELETE` |
+|---|---|---|---|
+| `Remote`: no internet, timeout, 5xx, 429, **401/403** | KEEP | KEEP | KEEP |
+| `Remote`: malformed body, any other status (e.g. 400) | REJECT | REJECT | REJECT |
+| `Validation` (422; on a delete, GoRest refusing it) | REJECT | REJECT | REJECT |
+| `Remote.NOT_FOUND` (404) | REJECT | GONE | GONE |
+| `Local` | REJECT | REJECT | REJECT |
+
+The repository then applies the decision with what each path knows:
+
+| Decision | Direct write (user is on screen) | Queued write during replay |
 |---|---|---|
-| No internet, timeout, 5xx, 429 Too Many Requests | Queued, returns `QUEUED` | **Kept**; replay stops and retries on the next sync |
-| 404 on `DELETE` | Success (already gone) | Success, entry deleted |
-| 404 on `UPDATE` | User removed locally, error returned | User removed locally, entry deleted |
-| 422 on `CREATE` (e.g. email taken) | Rolled back, error returned | Temp user removed, entry deleted |
-| 422 / other 4xx on `UPDATE` | Previous data restored, error returned | Local edit kept until next refresh, entry deleted |
-| Other 4xx on `DELETE` | User restored, error returned | User restored, entry deleted |
+| KEEP | Entry queued; returns `QUEUED`, or `QUEUED_AUTH_FAILED` for 401/403 | Entry kept for the next sync; the other entries are still sent |
+| REJECT | Entry deleted; a create also removes its temp user (the form stays open for a corrected resubmit). Returns the `DataError` | Entry deleted only; counted as rejected |
+| GONE | Delete: success. Update: user removed locally, returns `NOT_FOUND` | Entry deleted only; a delete counts as synced, an update as rejected |
 
-Nothing is recorded for a dropped queued write; `syncPending()` only reports how many were rejected. A user created
-offline whose email turns out to be taken therefore just disappears from the list. That is an accepted minor
-inconvenience, since direct writes made online still show their error.
+**401 and 403 are kept, not dropped.** A bad or expired build token would otherwise silently throw away every offline
+edit. Instead the write stays queued and the UI says "Couldn't authenticate, will retry" rather than "Saved offline".
+A build with a valid token drains the queue. Reads are unaffected: a refresh still reports the unauthorised error.
+
+Neither path rolls the cached users back (except a rejected direct create, whose temp user goes at once). When a write
+is rejected, only its pending entry is deleted, and the next refresh replaces the cached list with the server's: a
+rejected edit is undone then, a user created offline whose email turns out to be taken disappears, and a user whose
+delete was refused comes back. Nothing is recorded for a dropped queued write;
+`syncPending()` only reports how many were rejected. That is an accepted minor inconvenience, since direct writes made
+online still show their error.
 
 **Merge rules.** Several writes to one user collapse into a single queued request
 (`PendingSyncMerger`, one pure function):
@@ -155,7 +191,9 @@ call. The real `DELETE` is sent by `finalizeDelete` once the Snackbar is dismiss
 offline. Sync skips users that are still in their Undo window.
 
 **Replay and refresh.**
-- `syncPending()` replays the queue oldest first and stops at the first retryable failure.
+- `syncPending()` sends the queue oldest first, one loop with no per-entry outcome type: a success clears the entry, a
+  failure the policy keeps leaves the entry for the next sync, anything else deletes the entry. Every queued write is sent
+  once per sync; the pass never stops early and never retries.
 - A successful `CREATE` **re-keys** the temporary id to the server id in one transaction.
 - When a direct write succeeds online, it clears that user's stale pending row, so old data is never replayed over it.
 - `refresh()` **syncs first**. It fetches the last page of `/users` and replaces the cache (only if the page differs)
@@ -168,7 +206,7 @@ offline. Sync skips users that are still in their Undo window.
 
 ### Background sync
 
-The planning artifacts are in [`openspec/changes/add-background-sync`](./openspec/changes/add-background-sync).
+The planning artifacts are in [`openspec/changes/archive/2026-11-02-add-background-sync`](./openspec/changes/archive/2026-11-02-add-background-sync).
 
 The queue is also replayed while the app isn't in the foreground, so a change saved offline reaches GoRest even if the
 user never reopens the app. A background run calls **only `syncPending()`**, never `refresh()`, so a row never
@@ -219,7 +257,7 @@ application scope itself (a child scope passed to the repository), not by cancel
 
 ### UI: feed, profile, delete with Undo
 
-The planning artifacts are in [`openspec/changes/build-users-ui`](./openspec/changes/build-users-ui).
+The planning artifacts are in [`openspec/changes/archive/2026-11-02-build-users-ui`](./openspec/changes/archive/2026-11-02-build-users-ui).
 
 **The cache is the only data source.** `UsersViewModel` builds its state from one `combine`: `observeUsers()`, a
 one-minute ticker that recomputes the relative "Added 5 minutes ago" labels, the open Undo window, and the refresh
@@ -288,8 +326,8 @@ GOREST_API_TOKEN=<your token>
 ```
 
 On CI, set the `GOREST_API_TOKEN` environment variable instead. Without a token, the project still builds and every
-test passes, and the feed still loads. But creates, edits and deletes get `401` and are rejected, so set it before you
-try to write anything.
+test passes, and the feed still loads. But creates, edits and deletes get `401`: they stay queued and the app says
+"Couldn't authenticate, will retry", so set it before you try to write anything.
 
 - Android: `./gradlew :androidApp:installDebug`, or the run widget in the IDE.
 - iOS: open [`iosApp`](./iosApp) in Xcode and run. The build phase calls `:composeApp:embedAndSignAppleFrameworkForXcode`.
@@ -353,7 +391,7 @@ an Android emulator and an iOS simulator in light and dark mode.
 
 ### Example: the offline sync database
 
-The outbox design ([`openspec/changes/add-offline-pending-sync`](./openspec/changes/add-offline-pending-sync)) was
+The outbox design ([`openspec/changes/archive/2026-11-02-add-offline-pending-sync`](./openspec/changes/archive/2026-11-02-add-offline-pending-sync)) was
 planned with OpenSpec, and Claude was asked to challenge the design before writing it. That surfaced gaps the first
 description didn't cover:
 - users created offline have no server id, which led to temporary ids that are re-keyed after sync;
@@ -371,7 +409,7 @@ Each agent owned one set of files, and the orchestrator ticked off tasks and ran
 
 ### Example: the Ktor API client
 
-The HTTP layer ([`openspec/changes/add-ktor-api-client`](./openspec/changes/add-ktor-api-client)) was also planned with
+The HTTP layer ([`openspec/changes/archive/2026-11-02-add-ktor-api-client`](./openspec/changes/archive/2026-11-02-add-ktor-api-client)) was also planned with
 OpenSpec. Claude asked about the choices that changed the plan (module placement, page size, who owns the application
 scope) and flagged problems that the request didn't mention:
 - `Result`/`DataError` lived in a feature module, so a core HTTP module couldn't return them. They moved to `:core:domain`.
@@ -388,7 +426,7 @@ tests failed, and passed again once the code was restored.
 
 ### Example: the users UI
 
-The UI ([`openspec/changes/build-users-ui`](./openspec/changes/build-users-ui)) went from a free-form request to
+The UI ([`openspec/changes/archive/2026-11-02-build-users-ui`](./openspec/changes/archive/2026-11-02-build-users-ui)) went from a free-form request to
 OpenSpec artifacts. Before planning, Claude asked about the four points that would change the plan:
 - the "last synced" field, which the model doesn't have;
 - the shape of the Undo bar;
@@ -412,7 +450,7 @@ untinted gap between the panes and a selection tint that matched one of the avat
 
 ### Example: background sync
 
-The background sync ([`openspec/changes/add-background-sync`](./openspec/changes/add-background-sync)) started as a
+The background sync ([`openspec/changes/archive/2026-11-02-add-background-sync`](./openspec/changes/archive/2026-11-02-add-background-sync)) started as a
 request to "implement the online create, update and delete, queue them on error, and add WorkManager and the iOS
 background task". Before planning, Claude read the code and reported that the online writes, their queueing and their
 UI wiring already existed, so the change covers only the background job. It asked one question, whether *every* error
@@ -426,6 +464,24 @@ app-refresh request can't require a network. During implementation, a failing te
 doesn't drain `backgroundScope` work, so the iOS runner tests step with `runCurrent()`. Checking on the emulator
 showed that `adb shell cmd jobscheduler run -f` can't start periodic work early, because WorkManager skips a run that
 arrives before its period. The end-to-end check therefore waits for the real 30-minute period.
+
+### Example: typed write errors
+
+The profile used to guess that every 422 meant "This email may already be in use", and the rule for what happens to a
+failed write was written four times in the repository on top of a yes/no `isRetryable` flag. The change
+([`openspec/changes/typed-user-errors`](./openspec/changes/typed-user-errors)) was explored with Claude against GoRest's
+own API notes: a 422 body names the field and the reason, a `DELETE` can be refused with 422 when too few seeded records
+remain, and GoRest resets its data every few hours, so a 404 on a cached id is routine.
+
+Claude's first implementation added a feature-level `UserError` type with its own classifier. Reviewing it, the
+developer asked why that didn't just reuse the HTTP stack's existing status mapping. Claude explained what the extra
+type carried (the parsed field list, the per-operation meaning of 422) and offered to fold it into `DataError`. Before
+committing to a shape, it ran ktlint against a probe file and found that turning `DataError.Remote` into a sealed
+interface would force every value to be renamed. So the final design keeps the `Remote` enum untouched and adds a
+single `DataError.Validation(fields)` beside it. Claude updated the OpenSpec proposal, design, spec deltas and tasks
+first, unticked every task whose behaviour had changed, then re-implemented bottom-up. Throughout, the message text
+stays uninterpreted (no matching on "taken"), every keep/reject decision lives in one pure `OutboxPolicy` table, and
+the tests that asserted "401 rolls back" were rewritten to the new spec rather than deleted.
 
 ---
 

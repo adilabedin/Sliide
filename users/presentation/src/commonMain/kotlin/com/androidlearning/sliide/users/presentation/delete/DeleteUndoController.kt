@@ -4,6 +4,7 @@ import com.androidlearning.sliide.core.domain.util.DataError
 import com.androidlearning.sliide.core.domain.util.Result
 import com.androidlearning.sliide.users.domain.UserRepository
 import com.androidlearning.sliide.users.domain.model.User
+import com.androidlearning.sliide.users.domain.model.WriteStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -29,9 +30,15 @@ data class PendingDelete(
 
 /** One-off outcomes of a delete the screen should tell the user about. */
 sealed interface DeleteMessage {
+    /** The delete was rejected and the user restored; [error] says why (a [DataError.Validation] means GoRest refused it). */
     data class FinalizeFailed(
         val userName: String,
         val error: DataError,
+    ) : DeleteMessage
+
+    /** The server could not authenticate the app; the user stays removed and the delete is queued for a later sync. */
+    data class QueuedAuthFailed(
+        val userName: String,
     ) : DeleteMessage
 }
 
@@ -112,10 +119,17 @@ class DeleteUndoController(
     /** Sends the finalise without holding [mutex], so a slow network call never delays the next delete or Undo. */
     private fun finalize(window: PendingDelete) {
         scope.launch {
-            val result = repository.finalizeDelete(window.user)
-            if (result is Result.Failure) {
-                _messages.send(DeleteMessage.FinalizeFailed(userName = window.user.name, error = result.error))
-            }
+            val message =
+                when (val result = repository.finalizeDelete(window.user)) {
+                    is Result.Failure -> DeleteMessage.FinalizeFailed(userName = window.user.name, error = result.error)
+                    is Result.Success ->
+                        when (result.data) {
+                            // A delete queued because the device is offline needs no message (spec: user-deletion).
+                            WriteStatus.SYNCED, WriteStatus.QUEUED -> null
+                            WriteStatus.QUEUED_AUTH_FAILED -> DeleteMessage.QueuedAuthFailed(userName = window.user.name)
+                        }
+                }
+            message?.let { _messages.send(it) }
         }
     }
 
