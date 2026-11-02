@@ -82,6 +82,8 @@ class FakeUserRepository : UserRepository {
 
     override suspend fun syncPending(): Result<SyncReport, DataError.Remote> = syncResult
 
+    override suspend fun syncPending(userId: Long): Result<SyncReport, DataError.Remote> = syncResult
+
     override suspend fun refresh(): EmptyResult<DataError> {
         refreshCount++
         refreshGate?.await()

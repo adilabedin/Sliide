@@ -18,15 +18,17 @@ sealed interface BackgroundSyncOutcome {
 }
 
 /**
- * One background run, shared by the Android worker and the iOS refresh task (design D2). It replays the pending queue
+ * One background run, shared by the Android worker and the iOS refresh task (design D2). It replays pending writes
  * and nothing else: it never calls [UserRepository.refresh], so no row vanishes from a list the user is looking at.
  */
 class BackgroundUserSync(
     private val repository: UserRepository,
 ) {
-    suspend fun run(): BackgroundSyncOutcome =
+    /** Replays only [userId]'s entry when given (a per-user sync), otherwise the whole queue. */
+    suspend fun run(userId: Long? = null): BackgroundSyncOutcome =
         try {
-            when (val result = repository.syncPending()) {
+            val result = if (userId == null) repository.syncPending() else repository.syncPending(userId)
+            when (result) {
                 is Result.Success -> BackgroundSyncOutcome.Synced(result.data)
                 is Result.Failure -> BackgroundSyncOutcome.Stopped(result.error)
             }

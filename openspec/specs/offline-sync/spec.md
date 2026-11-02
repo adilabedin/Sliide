@@ -7,8 +7,8 @@ reason. It replays them later so that no local change is lost and none is sent t
 ## Requirements
 
 ### Requirement: Only retryable failures are queued
-A write SHALL be queued only when its API call fails with no connectivity, a timeout, a 5xx response or HTTP 429.
-Any other failure SHALL NOT be queued.
+A write SHALL be queued only when its API call fails with no connectivity, a timeout, a 5xx response, HTTP 429, HTTP 401
+or HTTP 403. Any other failure SHALL NOT be queued.
 
 #### Scenario: No internet
 - **WHEN** a create, update or finalised delete fails because the device is offline
@@ -24,15 +24,21 @@ Any other failure SHALL NOT be queued.
 
 #### Scenario: Validation error
 - **WHEN** a create fails with HTTP 422
-- **THEN** no pending entry is stored and the caller receives the validation error
+- **THEN** no pending entry is stored and the caller receives the classified validation error
 
 #### Scenario: Unauthorised
 - **WHEN** a write fails with HTTP 401
-- **THEN** no pending entry is stored and the caller receives an unauthorised error
+- **THEN** a pending entry is stored for that user, and the caller is told the write was queued because the server could
+  not authenticate the app
 
 #### Scenario: Replay rate limited
 - **WHEN** a pending entry is replayed and the API responds 429
-- **THEN** the entry stays queued and replay stops until the next sync
+- **THEN** the entry stays queued for the next sync and the remaining entries are still sent
+
+#### Scenario: Replay unauthorised
+- **WHEN** a pending entry is replayed and the API responds 401
+- **THEN** the entry stays queued for the next sync, the user keeps its local data, and the remaining entries are still
+  sent
 
 ### Requirement: Pending entries store a snapshot and an operation
 Each pending entry SHALL hold the user's data as it was at queue time and an operation that is exactly one of
@@ -75,12 +81,14 @@ API. Instead, it SHALL be merged into that user's pending CREATE.
 - **THEN** no DELETE request is sent and no pending DELETE is stored
 
 ### Requirement: Replay processes the queue oldest first
-Replaying the queue SHALL send pending entries one at a time, in the order they were first queued, and SHALL stop at
-the first retryable failure, leaving that entry and every later entry in the queue.
+Replaying the queue SHALL send each pending entry once, one at a time, in the order they were first queued. An entry
+that fails with an error kept for a later sync SHALL stay queued, and replay SHALL continue with the next entry; the sync
+then reports the first such error.
 
 #### Scenario: Connectivity drops mid-replay
-- **WHEN** three entries are pending, the first replays successfully and the second fails because there is no internet
-- **THEN** the first entry is removed, and the second and third remain in the queue in their original order
+- **WHEN** three entries are pending, the first replays successfully, the second fails because there is no internet and
+  the third succeeds
+- **THEN** only the second entry remains in the queue and the sync reports no internet
 
 ### Requirement: Successful replay clears the entry
 When a replayed entry succeeds, the system SHALL remove it from the queue. A replayed DELETE that gets HTTP 404 SHALL
@@ -99,26 +107,32 @@ temporary id with the server's user under the server id, and remove the pending 
 - **THEN** the cache holds no user with id -1, and the DELETE request targets id 7012
 
 ### Requirement: Permanently rejected replays are dropped
-If a replayed entry fails with a non-retryable error, the system SHALL delete the entry without recording it anywhere
-and count it as rejected. A rejected CREATE SHALL remove the temporary user. An UPDATE rejected with 404 SHALL remove
-the user. Any other rejected UPDATE SHALL keep the local data until the next refresh. A rejected DELETE SHALL restore
-the user's snapshot. Replay SHALL then continue with the next entry.
+If a replayed entry fails with an error that is not kept for a later sync, the system SHALL delete the entry without
+recording it anywhere and count it as rejected (a DELETE answered 404 counts as synced instead). Sync SHALL NOT change
+the cached users for it: the next refresh replaces the cached list with the server's, which removes a temporary user
+whose create was rejected, brings back a user whose delete was refused, and drops a user that no longer exists. Replay
+SHALL then continue with the next entry.
 
 #### Scenario: Replayed create rejected
-- **WHEN** a pending CREATE is replayed and the API responds 422
-- **THEN** the entry is removed, the user with the temporary id is removed from the cache, and the sync result counts one rejected write
+- **WHEN** a pending CREATE is replayed and the API responds 422 with a field error
+- **THEN** the entry is removed, the sync result counts one rejected write, and the next refresh removes the user with
+  the temporary id from the cache
 
 #### Scenario: Replayed delete rejected
-- **WHEN** a pending DELETE is replayed and the API responds 401
-- **THEN** the entry is removed and the user is back in the cache with its snapshot data
+- **WHEN** a pending DELETE is replayed and the API responds 422
+- **THEN** the entry is removed and the sync result counts one rejected write
 
 #### Scenario: Replayed update for a user that no longer exists
 - **WHEN** a pending UPDATE is replayed and the API responds 404
-- **THEN** the entry is removed and the user is removed from the cache
+- **THEN** the entry is removed and the sync result counts one rejected write
 
 #### Scenario: Replayed update rejected
 - **WHEN** a pending UPDATE is replayed and the API responds 422
 - **THEN** the entry is removed and the cached user keeps the locally edited data until the next refresh
+
+#### Scenario: Replayed write with an unexpected status
+- **WHEN** a pending CREATE is replayed and the API responds 400
+- **THEN** the entry is removed and replay continues with the next entry
 
 ### Requirement: A successful online write supersedes the pending entry
 When a direct API write for a server-known user succeeds, the system SHALL discard any pending entry for that user, so

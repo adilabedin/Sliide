@@ -121,6 +121,46 @@ class BackgroundUserSyncTest {
         }
 
     @Test
+    fun perUserRunSendsOnlyThatUsersEntry() =
+        runTest {
+            val h = RepositoryHarness(backgroundScope)
+            h.seedPending(h.seedUser(userEntity(41)), PendingOperation.UPDATE, queuedAt = 100)
+            h.seedPending(h.seedUser(userEntity(42)), PendingOperation.UPDATE, queuedAt = 200)
+
+            val outcome = BackgroundUserSync(h.repository).run(userId = 42)
+
+            assertThat(outcome).isEqualTo(BackgroundSyncOutcome.Synced(SyncReport(synced = 1, rejected = 0)))
+            assertThat(
+                h.apiClient.requests
+                    .filterIsInstance<RemoteRequest.Update>()
+                    .map { it.id },
+            ).containsExactly(42L)
+            assertThat(h.pendingSyncDao.entries.map { it.user.id }).containsExactly(41L)
+        }
+
+    @Test
+    fun perUserRunWithARetryableFailureStopsAndKeepsTheEntry() =
+        runTest {
+            val h = RepositoryHarness(backgroundScope)
+            h.seedPending(h.seedUser(userEntity(42)), PendingOperation.UPDATE)
+            h.apiClient.updateResults += Result.Failure(DataError.Remote.SERVER_ERROR)
+
+            val outcome = BackgroundUserSync(h.repository).run(userId = 42)
+
+            assertThat(outcome).isEqualTo(BackgroundSyncOutcome.Stopped(DataError.Remote.SERVER_ERROR))
+            assertThat(h.pendingSyncDao.entries.map { it.user.id }).containsExactly(42L)
+        }
+
+    @Test
+    fun perUserRunUnexpectedExceptionBecomesStoppedUnknown() =
+        runTest {
+            // A plain Exception, not an IllegalStateException: any non-cancellation failure must be caught.
+            val outcome = BackgroundUserSync(ThrowingSyncRepository(Exception("boom"))).run(userId = 42)
+
+            assertThat(outcome).isEqualTo(BackgroundSyncOutcome.Stopped(DataError.Remote.UNKNOWN))
+        }
+
+    @Test
     fun unexpectedExceptionBecomesStoppedUnknown() =
         runTest {
             val outcome = BackgroundUserSync(ThrowingSyncRepository(IllegalStateException("boom"))).run()
@@ -151,6 +191,8 @@ class BackgroundUserSyncTest {
         private val error: Throwable,
     ) : UserRepository {
         override suspend fun syncPending(): Result<SyncReport, DataError.Remote> = throw error
+
+        override suspend fun syncPending(userId: Long): Result<SyncReport, DataError.Remote> = throw error
 
         override fun observeUsers(): Flow<List<User>> = error("unused")
 

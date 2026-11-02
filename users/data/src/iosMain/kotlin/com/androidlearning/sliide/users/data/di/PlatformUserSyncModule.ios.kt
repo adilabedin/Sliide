@@ -13,7 +13,8 @@ actual val platformUserSyncModule: Module =
         single<ConnectivityCheck> { NwPathConnectivityCheck() }
         single<UserSyncScheduler> {
             BackgroundTaskUserSyncScheduler(
-                backgroundUserSync = get(),
+                // Lazy: BackgroundUserSync → repository → this scheduler would otherwise be a cycle.
+                backgroundUserSync = { get() },
                 connectivityCheck = get(),
                 applicationScope = get(ApplicationScope),
             )

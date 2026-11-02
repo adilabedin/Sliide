@@ -25,6 +25,8 @@ val usersDataModule =
                 apiClient = get(),
                 clock = get(),
                 applicationScope = get(ApplicationScope),
+                // Bound per platform in platformUserSyncModule.
+                syncScheduler = get(),
             )
         }
         // One background run; shared by the Android worker and the iOS refresh task (design D2).

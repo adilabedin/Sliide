@@ -20,6 +20,7 @@ import com.androidlearning.sliide.core.domain.util.FieldError
 import com.androidlearning.sliide.core.domain.util.Result
 import com.androidlearning.sliide.users.data.fake.FakeUserApiClient
 import com.androidlearning.sliide.users.data.fake.TestClock
+import com.androidlearning.sliide.users.domain.UserSyncScheduler
 import com.androidlearning.sliide.users.domain.model.Gender
 import com.androidlearning.sliide.users.domain.model.SyncReport
 import com.androidlearning.sliide.users.domain.model.UserDetails
@@ -174,6 +175,7 @@ class OfflineFirstUserRepositoryIntegrationTest {
             apiClient = apiClient,
             clock = clock,
             applicationScope = applicationScope,
+            syncScheduler = NoOpUserSyncScheduler,
         )
 
     private fun openDatabase(): SliideDatabase =
@@ -197,4 +199,11 @@ class OfflineFirstUserRepositoryIntegrationTest {
             delegate.upsert(user)
         }
     }
+}
+
+/** Scheduling is out of scope here (WorkManagerUserSyncSchedulerTest covers it); the repository only needs one. */
+private object NoOpUserSyncScheduler : UserSyncScheduler {
+    override fun schedulePeriodicSync() = Unit
+
+    override fun requestSync(userId: Long) = Unit
 }
