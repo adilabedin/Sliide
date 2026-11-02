@@ -5,6 +5,7 @@ import assertk.assertions.containsExactly
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import com.androidlearning.sliide.core.data.networking.HttpClientFactory
+import com.androidlearning.sliide.core.data.networking.goRestJson
 import com.androidlearning.sliide.core.domain.util.DataError
 import com.androidlearning.sliide.core.domain.util.FieldError
 import com.androidlearning.sliide.core.domain.util.Result
@@ -91,6 +92,22 @@ class KtorUserApiClientTest {
 
             assertThat(api.client.fetchLastPage()).isEqualTo(Result.Failure(DataError.Remote.SERVER_ERROR))
             assertThat(api.requests.size).isEqualTo(2)
+        }
+
+    @Test
+    fun pageCountHeaderWithSurroundingSpacesIsStillRead() =
+        runTest {
+            val api =
+                apiWith { request ->
+                    when (request.page()) {
+                        "1" -> respondUsers(userJson(1), pages = " 3 ")
+                        "3" -> respondUsers(userJson(41), pages = " 3 ")
+                        else -> error("unexpected page ${request.page()}")
+                    }
+                }
+
+            assertThat(api.client.fetchLastPage().ids()).containsExactly(41L)
+            assertThat(api.requests.map { it.page() }).containsExactly("1", "3")
         }
 
     @Test
@@ -288,7 +305,8 @@ class KtorUserApiClientTest {
                 sent += request
                 handler(request)
             }
-        val client = KtorUserApiClient(HttpClientFactory.create(engine, baseUrl = "https://gorest.test/public/v2/", apiToken = "t"))
+        val client =
+            KtorUserApiClient(HttpClientFactory.create(engine, goRestJson(), baseUrl = "https://gorest.test/public/v2/", apiToken = "t"))
     }
 
     private fun apiWith(handler: suspend MockRequestHandleScope.(HttpRequestData) -> HttpResponseData) = Api(handler)

@@ -5,12 +5,16 @@ import assertk.assertions.containsExactly
 import assertk.assertions.each
 import assertk.assertions.isEqualTo
 import assertk.assertions.isNull
+import com.androidlearning.sliide.core.domain.util.DataError
 import com.androidlearning.sliide.core.domain.util.Result
+import io.ktor.client.plugins.HttpTimeoutConfig
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import kotlin.test.Test
 
 class HttpClientFactoryTest {
@@ -77,4 +81,40 @@ class HttpClientFactoryTest {
 
             assertThat((result as Result.Success).data.body).isEqualTo(TestDto(5))
         }
+
+    @Test
+    fun bodiesAreDecodedWithTheInjectedJson() =
+        runTest {
+            val strict = Json { ignoreUnknownKeys = false }
+            val mock = MockClient(json = strict) { respondJson("""{"id":5,"unexpected":"field"}""") }
+
+            val result = mock.client.get<TestDto>("users/5")
+
+            assertThat(result).isEqualTo(Result.Failure(DataError.Remote.SERIALIZATION))
+        }
+
+    @Test
+    fun missingNullableFieldDecodesAsNull() =
+        runTest {
+            val mock = MockClient { respondJson("""{"id":5}""") }
+
+            val result = mock.client.get<NullableNoteDto>("users/5")
+
+            assertThat((result as Result.Success).data.body).isEqualTo(NullableNoteDto(id = 5, note = null))
+        }
+
+    @Test
+    fun timeoutsAreTwentySecondsPerRequestTenToConnectTwentyOnTheSocket() {
+        val config = HttpTimeoutConfig().apply { applyGoRestTimeouts() }
+
+        assertThat(config.requestTimeoutMillis).isEqualTo(20_000L)
+        assertThat(config.connectTimeoutMillis).isEqualTo(10_000L)
+        assertThat(config.socketTimeoutMillis).isEqualTo(20_000L)
+    }
+
+    @Serializable
+    private data class NullableNoteDto(
+        val id: Long,
+        val note: String?,
+    )
 }
