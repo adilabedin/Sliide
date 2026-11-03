@@ -87,25 +87,29 @@ class OfflineFirstUserRepository(
 
     override fun observeUsers(): Flow<List<User>> = userDao.observeAll().map { entities -> entities.map { it.toUser() } }
 
+    // Only a failed request queues a write. If the app dies mid-request the write is lost and the next
+    // refresh shows the server's data (here: removes the temp user); accepted as too rare to cover.
     override suspend fun createUser(details: UserDetails): Result<WriteStatus, DataError> =
         outlivingCaller {
             writeMutex.withLock {
-                val now = nowMillis()
                 val tempId = minOf(userDao.nextTempId(), lastIssuedTempId - 1)
                 lastIssuedTempId = tempId
-                val tempEntity = details.toUserEntity(id = tempId, createdAtEpochMillis = now)
+                val tempEntity =
+                    details.toUserEntity(id = tempId, createdAtEpochMillis = nowMillis())
                 userDao.upsert(tempEntity)
-                // Only a failed request queues a write. If the app dies mid-request the write is lost and the next
-                // refresh shows the server's data (here: removes the temp user); accepted as too rare to cover.
+
                 when (val result = apiClient.create(details)) {
                     is Result.Success -> {
                         rekey(tempEntity, result.data)
                         Result.Success(WriteStatus.SYNCED)
                     }
+
                     is Result.Failure ->
                         when (OutboxPolicy.decide(PendingOperation.CREATE, result.error)) {
                             OutboxDecision.KEEP -> {
-                                pendingSyncDao.upsert(tempEntity.toPendingSync(PendingOperation.CREATE, queuedAtEpochMillis = now))
+                                pendingSyncDao.upsert(
+                                    tempEntity.toPendingSync(PendingOperation.CREATE, queuedAtEpochMillis = nowMillis()),
+                                )
                                 syncScheduler.requestSync(tempEntity.id)
                                 Result.Success(queuedStatus(result.error))
                             }
@@ -122,9 +126,13 @@ class OfflineFirstUserRepository(
     override suspend fun updateUser(user: User): Result<WriteStatus, DataError> =
         outlivingCaller {
             writeMutex.withLock {
-                val previous = userDao.getById(user.id) ?: return@withLock Result.Failure(DataError.Local.NOT_FOUND)
+                val previous =
+                    userDao.getById(user.id)
+                        ?: return@withLock Result.Failure(DataError.Local.NOT_FOUND)
+
                 // The row keeps its original createdAt so the feed order and relative time don't jump on edit.
-                val updated = user.toUserEntity().copy(createdAtEpochMillis = previous.createdAtEpochMillis)
+                val updated =
+                    user.toUserEntity().copy(createdAtEpochMillis = previous.createdAtEpochMillis)
 
                 if (user.id < 0) {
                     // Never-synced user: no API call, the change folds into its pending CREATE (spec: offline-sync).
@@ -151,10 +159,16 @@ class OfflineFirstUserRepository(
                         }
                         Result.Success(WriteStatus.SYNCED)
                     }
+
                     is Result.Failure ->
                         when (OutboxPolicy.decide(PendingOperation.UPDATE, result.error)) {
                             OutboxDecision.KEEP -> {
-                                transactionRunner.inTransaction { enqueue(updated, PendingOperation.UPDATE) }
+                                transactionRunner.inTransaction {
+                                    enqueue(
+                                        updated,
+                                        PendingOperation.UPDATE,
+                                    )
+                                }
                                 syncScheduler.requestSync(user.id)
                                 Result.Success(queuedStatus(result.error))
                             }
@@ -179,7 +193,8 @@ class OfflineFirstUserRepository(
     override suspend fun removeUserLocally(id: Long): Result<User, DataError.Local> =
         outlivingCaller {
             writeMutex.withLock {
-                val entity = userDao.getById(id) ?: return@withLock Result.Failure(DataError.Local.NOT_FOUND)
+                val entity =
+                    userDao.getById(id) ?: return@withLock Result.Failure(DataError.Local.NOT_FOUND)
                 userDao.deleteById(id)
                 awaitingFinalize += id
                 Result.Success(entity.toUser())
@@ -216,7 +231,11 @@ class OfflineFirstUserRepository(
                 val decision =
                     when (val result = apiClient.delete(user.id)) {
                         is Result.Success -> null
-                        is Result.Failure -> OutboxPolicy.decide(PendingOperation.DELETE, result.error) to result.error
+                        is Result.Failure ->
+                            OutboxPolicy.decide(
+                                PendingOperation.DELETE,
+                                result.error,
+                            ) to result.error
                     }
                 when (decision?.first) {
                     // Deleted, or already gone on the server: the queued DELETE (and anything older) is done.
@@ -224,8 +243,14 @@ class OfflineFirstUserRepository(
                         pendingSyncDao.deleteByUserId(user.id)
                         Result.Success(WriteStatus.SYNCED)
                     }
+
                     OutboxDecision.KEEP -> {
-                        transactionRunner.inTransaction { enqueue(user.toUserEntity(), PendingOperation.DELETE) }
+                        transactionRunner.inTransaction {
+                            enqueue(
+                                user.toUserEntity(),
+                                PendingOperation.DELETE,
+                            )
+                        }
                         syncScheduler.requestSync(user.id)
                         Result.Success(queuedStatus(decision.second))
                     }
@@ -276,7 +301,11 @@ class OfflineFirstUserRepository(
             if (sync is Result.Failure) return@outlivingCaller Result.Failure(sync.error)
 
             writeMutex.withLock {
-                if (pendingSyncDao.count() > 0 || awaitingFinalize.isNotEmpty()) return@withLock Result.Success(Unit)
+                if (pendingSyncDao.count() > 0 || awaitingFinalize.isNotEmpty()) {
+                    return@withLock Result.Success(
+                        Unit,
+                    )
+                }
 
                 when (val page = apiClient.fetchLastPage()) {
                     is Result.Failure -> Result.Failure(page.error)
@@ -312,7 +341,8 @@ class OfflineFirstUserRepository(
                 EntryOutcome.Skipped -> Unit
             }
         }
-        return firstKeptError?.let { Result.Failure(it) } ?: Result.Success(SyncReport(synced = synced, rejected = rejected))
+        return firstKeptError?.let { Result.Failure(it) }
+            ?: Result.Success(SyncReport(synced = synced, rejected = rejected))
     }
 
     /**
@@ -330,11 +360,14 @@ class OfflineFirstUserRepository(
                     clearSynced(entry, result.data)
                     EntryOutcome.Synced
                 }
+
                 is Result.Failure -> {
                     val decision = OutboxPolicy.decide(entry.operation, result.error)
                     if (decision == OutboxDecision.KEEP) {
                         // KEEP is only decided for remote errors; the fallback keeps the type total.
-                        return@withLock EntryOutcome.Kept(result.error as? DataError.Remote ?: DataError.Remote.UNKNOWN)
+                        return@withLock EntryOutcome.Kept(
+                            result.error as? DataError.Remote ?: DataError.Remote.UNKNOWN,
+                        )
                     }
                     pendingSyncDao.deleteByUserId(entry.user.id)
                     // A delete of a user already gone on the server is done; everything else was rejected.
@@ -352,7 +385,10 @@ class OfflineFirstUserRepository(
         when (entry.operation) {
             PendingOperation.CREATE -> apiClient.create(entry.user.toUserDetails())
             PendingOperation.UPDATE -> apiClient.update(entry.user.id, entry.user.toUserDetails())
-            PendingOperation.DELETE -> apiClient.delete(entry.user.id).let { if (it is Result.Failure) it else Result.Success(null) }
+            PendingOperation.DELETE ->
+                apiClient
+                    .delete(entry.user.id)
+                    .let { if (it is Result.Failure) it else Result.Success(null) }
         }
 
     /** Clears a sent entry; a created user is re-keyed to its server id and an updated one takes the server's data. */
@@ -362,12 +398,20 @@ class OfflineFirstUserRepository(
     ) {
         val userId = entry.user.id
         when {
-            entry.operation == PendingOperation.CREATE && serverUser != null -> rekey(entry.user, serverUser)
+            entry.operation == PendingOperation.CREATE && serverUser != null ->
+                rekey(
+                    entry.user,
+                    serverUser,
+                )
+
             entry.operation == PendingOperation.UPDATE && serverUser != null ->
                 transactionRunner.inTransaction {
-                    userDao.getById(userId)?.let { userDao.upsert(serverUser.toUserEntity(it.createdAtEpochMillis)) }
+                    userDao
+                        .getById(userId)
+                        ?.let { userDao.upsert(serverUser.toUserEntity(it.createdAtEpochMillis)) }
                     pendingSyncDao.deleteByUserId(userId)
                 }
+
             else -> pendingSyncDao.deleteByUserId(userId)
         }
     }
@@ -382,7 +426,8 @@ class OfflineFirstUserRepository(
         serverUser: RemoteUser,
     ) {
         transactionRunner.inTransaction {
-            val createdAt = userDao.getById(temp.id)?.createdAtEpochMillis ?: temp.createdAtEpochMillis
+            val createdAt =
+                userDao.getById(temp.id)?.createdAtEpochMillis ?: temp.createdAtEpochMillis
             userDao.deleteById(temp.id)
             userDao.upsert(serverUser.toUserEntity(createdAt))
             pendingSyncDao.deleteByUserId(temp.id)
@@ -398,7 +443,11 @@ class OfflineFirstUserRepository(
         operation: PendingOperation,
     ) {
         val existing = pendingSyncDao.getByUserId(user.id)
-        val merged = PendingSyncMerger.merge(existing, user.toPendingSync(operation, queuedAtEpochMillis = nowMillis()))
+        val merged =
+            PendingSyncMerger.merge(
+                existing,
+                user.toPendingSync(operation, queuedAtEpochMillis = nowMillis()),
+            )
         if (merged == null) pendingSyncDao.deleteByUserId(user.id) else pendingSyncDao.upsert(merged)
     }
 
