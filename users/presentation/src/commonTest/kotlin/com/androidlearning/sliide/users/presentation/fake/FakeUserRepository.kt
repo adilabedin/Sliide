@@ -9,8 +9,11 @@ import com.androidlearning.sliide.users.domain.model.User
 import com.androidlearning.sliide.users.domain.model.UserDetails
 import com.androidlearning.sliide.users.domain.model.WriteStatus
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.onStart
+import kotlin.time.Duration
 
 /**
  * In-memory [UserRepository] for presentation tests.
@@ -18,6 +21,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
  * - The cache emits nothing until [emit] is called, so tests can observe the initial loading state.
  * - [removeUserLocally] / [restoreUser] edit the emitted list like the real repository. A failed [finalizeDelete]
  *   leaves the user removed, as the real repository does until the next refresh.
+ * - [observeDelay] holds back each new subscriber's first list, as Room's query does, so a resubscribing feed can be
+ *   seen before the cache answers.
  * - Every method records its calls; results are scripted through the `*Result` vars; a non-null `*Gate` suspends the
  *   call until the test completes it.
  */
@@ -30,6 +35,8 @@ class FakeUserRepository : UserRepository {
     var finalizeResult: Result<WriteStatus, DataError> = Result.Success(WriteStatus.SYNCED)
     var refreshResult: EmptyResult<DataError> = Result.Success(Unit)
     var syncResult: Result<SyncReport, DataError.Remote> = Result.Success(SyncReport(synced = 0, rejected = 0))
+
+    var observeDelay: Duration = Duration.ZERO
 
     var refreshGate: CompletableDeferred<Unit>? = null
     var saveGate: CompletableDeferred<Unit>? = null
@@ -48,7 +55,7 @@ class FakeUserRepository : UserRepository {
         users.emit(value)
     }
 
-    override fun observeUsers(): Flow<List<User>> = users
+    override fun observeUsers(): Flow<List<User>> = users.onStart { if (observeDelay > Duration.ZERO) delay(observeDelay) }
 
     override suspend fun createUser(details: UserDetails): Result<WriteStatus, DataError> {
         createdDetails += details

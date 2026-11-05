@@ -1,6 +1,5 @@
 package com.androidlearning.sliide.users.presentation.users
 
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.mutableStateOf
@@ -67,7 +66,6 @@ class UsersScreenTest {
                     onAddUserClick = {},
                     snackbarHostState = remember { SnackbarHostState() },
                     listState = rememberLazyListState(),
-                    gridState = rememberLazyGridState(),
                     currentTime = { now },
                 )
             }

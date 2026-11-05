@@ -9,6 +9,7 @@ kotlin {
             implementation(projects.core.database)
             implementation(projects.core.data)
             implementation(libs.kotlinx.coroutines.core)
+            implementation(libs.androidx.navigation.compose)
             implementation(projects.users.domain)
             implementation(projects.users.data)
             implementation(projects.users.presentation)

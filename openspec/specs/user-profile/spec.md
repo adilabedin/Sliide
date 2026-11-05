@@ -33,8 +33,12 @@ precede the title in every layout. Pressing it SHALL leave Create mode without c
 - **THEN** a back arrow labelled "Back" precedes the "New user" title, and no close icon is shown
 
 #### Scenario: Back out of create
-- **WHEN** the user has typed a name in Create mode and presses the back arrow
-- **THEN** the profile closes, no user is created, and the feed is unchanged
+- **WHEN** the user has typed a name in Create mode and presses the back arrow or system back
+- **THEN** the add-user screen closes, no user is created, and the feed is unchanged
+
+#### Scenario: Create starts empty
+- **WHEN** the user leaves the add-user screen with a typed name and opens it again
+- **THEN** the form is empty
 
 ### Requirement: Edit icon turns into Save
 In View mode the end of the app bar SHALL show an Edit icon button with an accessible label. Pressing it SHALL switch

@@ -17,15 +17,14 @@ import com.androidlearning.sliide.users.domain.validation.UserDetailsValidator
 import com.androidlearning.sliide.users.presentation.delete.DeleteUndoController
 import com.androidlearning.sliide.users.presentation.generated.resources.Res
 import com.androidlearning.sliide.users.presentation.generated.resources.profile_no_longer_available
-import com.androidlearning.sliide.users.presentation.generated.resources.profile_saved_offline
 import com.androidlearning.sliide.users.presentation.generated.resources.validation_email_invalid
 import com.androidlearning.sliide.users.presentation.generated.resources.validation_email_required
 import com.androidlearning.sliide.users.presentation.generated.resources.validation_name_required
 import com.androidlearning.sliide.users.presentation.generated.resources.validation_name_too_short
-import com.androidlearning.sliide.users.presentation.generated.resources.write_queued_auth_failed
 import com.androidlearning.sliide.users.presentation.users.initialsOf
 import com.androidlearning.sliide.users.presentation.util.UiText
 import com.androidlearning.sliide.users.presentation.util.relativeAddedTime
+import com.androidlearning.sliide.users.presentation.util.toQueuedMessage
 import com.androidlearning.sliide.users.presentation.util.toUiText
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -42,7 +41,8 @@ import kotlinx.coroutines.launch
 import kotlin.time.Clock
 
 /**
- * The reusable profile (design D2): one ViewModel for the detail pane, retargeted with [ProfileAction.OnOpen].
+ * The reusable profile (design D2): one ViewModel for the detail pane, retargeted with [ProfileAction.OnOpen], and a
+ * fresh one for each visit to the add-user screen.
  * View shows the cached user, Edit and Create share the same validated form. The target, mode and draft live in
  * [SavedStateHandle] so process death restores an open profile, including an unsaved edit.
  */
@@ -77,24 +77,48 @@ class ProfileViewModel(
 
     init {
         savedStateHandle.get<Long>(KEY_TARGET)?.let { key ->
-            val mode = savedStateHandle.get<String>(KEY_MODE)?.let(ProfileMode::valueOf) ?: ProfileMode.VIEW
+            val mode =
+                savedStateHandle.get<String>(KEY_MODE)?.let(ProfileMode::valueOf)
+                    ?: ProfileMode.VIEW
             open(key, restoredMode = mode, restoredForm = restoredForm())
         }
     }
 
     fun onAction(action: ProfileAction) {
         when (action) {
-            is ProfileAction.OnOpen -> if (action.key != openKey) open(action.key, restoredMode = null, restoredForm = null)
+            is ProfileAction.OnOpen ->
+                if (action.key != openKey) {
+                    open(
+                        action.key,
+                        restoredMode = null,
+                        restoredForm = null,
+                    )
+                }
+
             ProfileAction.OnDismiss -> dismiss()
-            ProfileAction.OnEditClick -> if (_state.value.mode == ProfileMode.VIEW && original != null) setMode(ProfileMode.EDIT)
+            ProfileAction.OnEditClick ->
+                if (_state.value.mode == ProfileMode.VIEW && original != null) {
+                    setMode(
+                        ProfileMode.EDIT,
+                    )
+                }
+
             ProfileAction.OnCancelEdit -> cancelEdit()
             is ProfileAction.OnNameChange -> editForm(nameChanged = true) { it.copy(name = action.name) }
             is ProfileAction.OnEmailChange -> editForm(emailChanged = true) { it.copy(email = action.email) }
             is ProfileAction.OnGenderChange -> editForm { it.copy(gender = action.gender) }
             is ProfileAction.OnStatusChange -> editForm { it.copy(status = action.status) }
             ProfileAction.OnSaveClick -> save()
-            ProfileAction.OnDeleteClick -> if (original != null) _state.value = _state.value.copy(showDeleteDialog = true)
-            ProfileAction.OnDeleteCancel -> _state.value = _state.value.copy(showDeleteDialog = false)
+            ProfileAction.OnDeleteClick ->
+                if (original != null) {
+                    _state.value =
+                        _state.value.copy(showDeleteDialog = true)
+                }
+
+            ProfileAction.OnDeleteCancel ->
+                _state.value =
+                    _state.value.copy(showDeleteDialog = false)
+
             ProfileAction.OnDeleteConfirm -> confirmDelete()
         }
     }
@@ -124,7 +148,11 @@ class ProfileViewModel(
             emailTouched = false
         }
         val draft = restoredForm.takeIf { restoredMode == ProfileMode.EDIT }
-        setState(mode = restoredMode ?: ProfileMode.VIEW, header = null, form = draft ?: ProfileForm())
+        setState(
+            mode = restoredMode ?: ProfileMode.VIEW,
+            header = null,
+            form = draft ?: ProfileForm(),
+        )
         observeJob =
             userRepository
                 .observeUsers()
@@ -194,7 +222,12 @@ class ProfileViewModel(
         if (!current.canSave) return
         val form = current.form
         val details =
-            UserDetails(name = form.name.trim(), email = form.email.trim(), gender = form.gender, status = form.status)
+            UserDetails(
+                name = form.name.trim(),
+                email = form.email.trim(),
+                gender = form.gender,
+                status = form.status,
+            )
         _state.value = current.copy(isSaving = true, canSave = false)
         viewModelScope.launch {
             when (current.mode) {
@@ -202,9 +235,15 @@ class ProfileViewModel(
                 ProfileMode.EDIT -> {
                     val user = original ?: return@launch
                     val updated =
-                        user.copy(name = details.name, email = details.email, gender = details.gender, status = details.status)
+                        user.copy(
+                            name = details.name,
+                            email = details.email,
+                            gender = details.gender,
+                            status = details.status,
+                        )
                     onEditResult(userRepository.updateUser(updated), updated)
                 }
+
                 ProfileMode.VIEW -> Unit
             }
         }
@@ -214,8 +253,9 @@ class ProfileViewModel(
         when (result) {
             is Result.Success -> {
                 clearTarget()
-                send(ProfileEvent.Created(result.data.queuedMessage()))
+                send(ProfileEvent.Created(result.data))
             }
+
             is Result.Failure -> onSaveFailure(result.error)
         }
     }
@@ -229,9 +269,15 @@ class ProfileViewModel(
                 original = updated
                 nameTouched = false
                 emailTouched = false
-                setState(mode = ProfileMode.VIEW, header = _state.value.header, form = updated.toForm(), isSaving = false)
-                result.data.queuedMessage()?.let { send(ProfileEvent.ShowMessage(it)) }
+                setState(
+                    mode = ProfileMode.VIEW,
+                    header = _state.value.header,
+                    form = updated.toForm(),
+                    isSaving = false,
+                )
+                result.data.toQueuedMessage()?.let { send(ProfileEvent.ShowMessage(it)) }
             }
+
             is Result.Failure -> onSaveFailure(result.error)
         }
     }
@@ -243,16 +289,13 @@ class ProfileViewModel(
     private fun onSaveFailure(error: DataError) {
         val current = _state.value
         send(ProfileEvent.ShowMessage(error.toUiText()))
-        setState(mode = current.mode, header = current.header, form = current.form, isSaving = false)
+        setState(
+            mode = current.mode,
+            header = current.header,
+            form = current.form,
+            isSaving = false,
+        )
     }
-
-    /** Why an accepted write was queued, or null when it reached the server. */
-    private fun WriteStatus.queuedMessage(): UiText? =
-        when (this) {
-            WriteStatus.SYNCED -> null
-            WriteStatus.QUEUED -> UiText.Resource(Res.string.profile_saved_offline)
-            WriteStatus.QUEUED_AUTH_FAILED -> UiText.Resource(Res.string.write_queued_auth_failed)
-        }
 
     private fun confirmDelete() {
         val user = original ?: return
@@ -312,7 +355,9 @@ class ProfileViewModel(
             name = name,
             email = savedStateHandle.get<String>(KEY_EMAIL).orEmpty(),
             gender = savedStateHandle.get<String>(KEY_GENDER)?.let(Gender::valueOf) ?: Gender.MALE,
-            status = savedStateHandle.get<String>(KEY_STATUS)?.let(UserStatus::valueOf) ?: UserStatus.ACTIVE,
+            status =
+                savedStateHandle.get<String>(KEY_STATUS)?.let(UserStatus::valueOf)
+                    ?: UserStatus.ACTIVE,
         )
     }
 

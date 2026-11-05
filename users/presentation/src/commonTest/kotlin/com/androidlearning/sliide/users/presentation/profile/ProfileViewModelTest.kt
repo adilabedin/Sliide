@@ -361,7 +361,7 @@ class ProfileViewModelTest {
         }
 
     @Test
-    fun onlineCreateClosesWithoutMessage() =
+    fun onlineCreateReportsItSynced() =
         runTest {
             val viewModel = viewModel()
             viewModel.onAction(ProfileAction.OnOpen(ProfileKey.CREATE))
@@ -371,7 +371,7 @@ class ProfileViewModelTest {
                 viewModel.onAction(ProfileAction.OnGenderChange(Gender.FEMALE))
                 viewModel.onAction(ProfileAction.OnSaveClick)
 
-                assertThat(awaitItem()).isEqualTo(ProfileEvent.Created(message = null))
+                assertThat(awaitItem()).isEqualTo(ProfileEvent.Created(WriteStatus.SYNCED))
             }
             assertThat(repository.createdDetails).containsExactly(
                 UserDetails("Ada Lovelace", "ada@example.com", Gender.FEMALE, UserStatus.ACTIVE),
@@ -379,7 +379,7 @@ class ProfileViewModelTest {
         }
 
     @Test
-    fun offlineCreateClosesSayingSavedOffline() =
+    fun offlineCreateReportsItWasQueued() =
         runTest {
             repository.createResult = Result.Success(WriteStatus.QUEUED)
             val viewModel = viewModel()
@@ -389,12 +389,12 @@ class ProfileViewModelTest {
                 viewModel.onAction(ProfileAction.OnEmailChange("ada@example.com"))
                 viewModel.onAction(ProfileAction.OnSaveClick)
 
-                assertThat(awaitItem()).isEqualTo(ProfileEvent.Created(text(Res.string.profile_saved_offline)))
+                assertThat(awaitItem()).isEqualTo(ProfileEvent.Created(WriteStatus.QUEUED))
             }
         }
 
     @Test
-    fun unauthorisedCreateClosesSayingItWillRetry() =
+    fun unauthorisedCreateReportsItWasQueuedForRetry() =
         runTest {
             repository.createResult = Result.Success(WriteStatus.QUEUED_AUTH_FAILED)
             val viewModel = viewModel()
@@ -404,7 +404,7 @@ class ProfileViewModelTest {
                 viewModel.onAction(ProfileAction.OnEmailChange("ada@example.com"))
                 viewModel.onAction(ProfileAction.OnSaveClick)
 
-                assertThat(awaitItem()).isEqualTo(ProfileEvent.Created(text(Res.string.write_queued_auth_failed)))
+                assertThat(awaitItem()).isEqualTo(ProfileEvent.Created(WriteStatus.QUEUED_AUTH_FAILED))
             }
         }
 

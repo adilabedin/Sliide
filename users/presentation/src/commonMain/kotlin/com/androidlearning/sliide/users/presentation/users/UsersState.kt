@@ -37,11 +37,16 @@ data class UsersState(
     val banner: UiText? = null,
     val pendingDelete: PendingDeleteUi? = null,
     val confirmDelete: UserUi? = null,
-    /** The card to highlight: the chosen user, else the default selection; `null` while creating a user. */
+    /** The open profile, whose card is highlighted: the chosen user, else the default selection. */
     val selectedUserId: Long? = null,
     /**
      * On two-pane layouts with no chosen profile, the first user in the feed, shown in the detail pane by default
      * (spec: adaptive-layout). `null` on single-pane layouts, while a profile is chosen, or when there are no users.
      */
     val defaultSelectedUserId: Long? = null,
+    /**
+     * After a create, the user that is now first in the cache. The feed scrolls to the top once that user is its first
+     * card, then reports [UsersAction.OnScrolledToTop]; `null` otherwise.
+     */
+    val scrollToTopUserId: Long? = null,
 )

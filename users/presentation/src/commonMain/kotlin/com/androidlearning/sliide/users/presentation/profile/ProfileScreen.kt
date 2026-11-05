@@ -26,17 +26,19 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigationevent.NavigationEventInfo
+import androidx.navigationevent.compose.NavigationBackHandler
+import androidx.navigationevent.compose.rememberNavigationEventState
 import com.androidlearning.sliide.core.designsystem.component.DestructiveButton
 import com.androidlearning.sliide.core.designsystem.theme.SliideSpacing
 import com.androidlearning.sliide.core.designsystem.theme.SliideTheme
 import com.androidlearning.sliide.users.domain.model.Gender
 import com.androidlearning.sliide.users.domain.model.UserStatus
+import com.androidlearning.sliide.users.domain.model.WriteStatus
 import com.androidlearning.sliide.users.presentation.composables.DeleteUserDialog
 import com.androidlearning.sliide.users.presentation.composables.ProfileFormCard
 import com.androidlearning.sliide.users.presentation.composables.ProfileHeaderSection
@@ -55,8 +57,9 @@ import org.jetbrains.compose.resources.stringResource
 private val FormMaxWidth = 560.dp
 
 /**
- * The profile's ViewModel-wired entry point. [profileKey] is a user id or [ProfileKey.CREATE]; the caller owns
- * navigation: [onClose] leaves the profile (with a message for the feed), [onCreated] does the same after a create.
+ * The profile's ViewModel-wired entry point. [profileKey] is a user id (the detail pane) or [ProfileKey.CREATE] (the
+ * add-user screen); the caller owns navigation: [onClose] leaves the profile (with a message for the feed),
+ * [onCreated] leaves the add-user screen with how the new user was saved.
  */
 @Composable
 fun ProfileRoot(
@@ -64,7 +67,7 @@ fun ProfileRoot(
     profileKey: Long,
     showBackButton: Boolean,
     onClose: (UiText?) -> Unit,
-    onCreated: (UiText?) -> Unit,
+    onCreated: (WriteStatus) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -76,7 +79,7 @@ fun ProfileRoot(
     ObserveAsEvents(viewModel.events) { event ->
         when (event) {
             is ProfileEvent.Close -> onClose(event.message)
-            is ProfileEvent.Created -> onCreated(event.message)
+            is ProfileEvent.Created -> onCreated(event.status)
             is ProfileEvent.ShowMessage -> scope.launch { snackbarHostState.showSnackbar(event.message.resolve()) }
         }
     }
@@ -91,7 +94,6 @@ fun ProfileRoot(
     )
 }
 
-@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun ProfileScreen(
     state: ProfileState,
@@ -101,10 +103,12 @@ fun ProfileScreen(
     snackbarHostState: SnackbarHostState,
     modifier: Modifier = Modifier,
 ) {
-    // Back while editing discards the draft instead of leaving the profile. CMP's BackHandler is deprecated in favour
-    // of NavigationEventHandler, whose shared API is not published for this CMP version yet.
-    @Suppress("DEPRECATION")
-    BackHandler(enabled = state.mode == ProfileMode.EDIT) { onAction(ProfileAction.OnCancelEdit) }
+    // Back while editing discards the draft instead of leaving the profile.
+    NavigationBackHandler(
+        state = rememberNavigationEventState(NavigationEventInfo.None),
+        isBackEnabled = state.mode == ProfileMode.EDIT,
+        onBackCompleted = { onAction(ProfileAction.OnCancelEdit) },
+    )
 
     Scaffold(
         modifier = modifier,

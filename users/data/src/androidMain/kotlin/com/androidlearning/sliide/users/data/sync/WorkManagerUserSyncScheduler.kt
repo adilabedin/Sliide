@@ -27,12 +27,18 @@ class WorkManagerUserSyncScheduler(
 ) : UserSyncScheduler {
     override fun schedulePeriodicSync() {
         val request =
-            PeriodicWorkRequestBuilder<UserSyncWorker>(SYNC_INTERVAL_MINUTES, TimeUnit.MINUTES)
-                .setConstraints(onlineOnly)
-                .build()
+            PeriodicWorkRequestBuilder<UserSyncWorker>(
+                SYNC_INTERVAL_MINUTES,
+                TimeUnit.MINUTES,
+            ).setConstraints(onlineOnly).build()
+
         WorkManager
             .getInstance(context)
-            .enqueueUniquePeriodicWork(UNIQUE_WORK_NAME, ExistingPeriodicWorkPolicy.KEEP, request)
+            .enqueueUniquePeriodicWork(
+                UNIQUE_WORK_NAME,
+                ExistingPeriodicWorkPolicy.KEEP,
+                request,
+            )
     }
 
     override fun requestSync(userId: Long) {
@@ -41,9 +47,14 @@ class WorkManagerUserSyncScheduler(
                 .setConstraints(onlineOnly)
                 .setInputData(workDataOf(UserSyncWorker.KEY_USER_ID to userId))
                 .build()
+
         WorkManager
             .getInstance(context)
-            .enqueueUniqueWork(userWorkName(userId), ExistingWorkPolicy.REPLACE, request)
+            .enqueueUniqueWork(
+                userWorkName(userId),
+                ExistingWorkPolicy.REPLACE,
+                request,
+            )
     }
 
     private val onlineOnly: Constraints

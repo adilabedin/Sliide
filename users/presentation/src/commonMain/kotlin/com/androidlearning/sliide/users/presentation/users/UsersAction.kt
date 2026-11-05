@@ -31,20 +31,23 @@ sealed interface UsersAction {
     ) : UsersAction
 
     /**
-     * The profile the user chose to open: a user id, `ProfileKey.CREATE`, or `null` when none is chosen. Drives the
-     * card highlight and, on two-pane layouts, the default first-user selection.
+     * The profile the user chose to open, or `null` when they closed it. Drives which profile is shown, the card
+     * highlight and, on two-pane layouts, the default first-user selection.
      */
     data class OnSelectionChange(
-        val key: Long?,
+        val userId: Long?,
     ) : UsersAction
 
-    /** Whether the feed and the detail pane are shown side by side (expanded width). */
+    /** Whether the feed and the profile are shown side by side (anything wider than a phone held upright). */
     data class OnPaneLayoutChange(
         val isTwoPane: Boolean,
     ) : UsersAction
 
-    /** A user was created from the profile: scroll to the top where it appears. */
+    /** A user was created on the add-user screen: scroll to the top where it appears. */
     data object OnUserCreated : UsersAction
+
+    /** The feed is at its top with the new user showing; see [UsersState.scrollToTopUserId]. */
+    data object OnScrolledToTop : UsersAction
 
     /** A message from another pane (e.g. the profile) to show in this screen's snackbar host. */
     data class OnShowMessage(
