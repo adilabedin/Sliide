@@ -26,12 +26,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigationevent.NavigationEventInfo
+import androidx.navigationevent.compose.NavigationBackHandler
+import androidx.navigationevent.compose.rememberNavigationEventState
 import com.androidlearning.sliide.core.designsystem.component.DestructiveButton
 import com.androidlearning.sliide.core.designsystem.theme.SliideSpacing
 import com.androidlearning.sliide.core.designsystem.theme.SliideTheme
@@ -93,7 +94,6 @@ fun ProfileRoot(
     )
 }
 
-@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun ProfileScreen(
     state: ProfileState,
@@ -103,10 +103,12 @@ fun ProfileScreen(
     snackbarHostState: SnackbarHostState,
     modifier: Modifier = Modifier,
 ) {
-    // Back while editing discards the draft instead of leaving the profile. CMP's BackHandler is deprecated in favour
-    // of NavigationEventHandler, whose shared API is not published for this CMP version yet.
-    @Suppress("DEPRECATION")
-    BackHandler(enabled = state.mode == ProfileMode.EDIT) { onAction(ProfileAction.OnCancelEdit) }
+    // Back while editing discards the draft instead of leaving the profile.
+    NavigationBackHandler(
+        state = rememberNavigationEventState(NavigationEventInfo.None),
+        isBackEnabled = state.mode == ProfileMode.EDIT,
+        onBackCompleted = { onAction(ProfileAction.OnCancelEdit) },
+    )
 
     Scaffold(
         modifier = modifier,

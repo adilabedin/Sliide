@@ -6,10 +6,11 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.backhandler.BackHandler
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigationevent.NavigationEventInfo
+import androidx.navigationevent.compose.NavigationBackHandler
+import androidx.navigationevent.compose.rememberNavigationEventState
 import com.androidlearning.sliide.core.designsystem.layout.SliideAdaptiveListDetailLayout
 import com.androidlearning.sliide.core.designsystem.layout.currentDeviceConfiguration
 import com.androidlearning.sliide.core.designsystem.layout.showsListDetailOnePaneAtATime
@@ -38,7 +39,6 @@ import org.koin.compose.viewmodel.koinViewModel
  * Adding a user is a separate destination; [onAddUserClick] goes there, and [createdStatus] is how its last save
  * went, announced here once and then cleared through [onCreatedStatusShown].
  */
-@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun UsersListDetailRoot(
     onAddUserClick: () -> Unit,
@@ -86,8 +86,11 @@ fun UsersListDetailRoot(
 
     // On a phone held upright the profile covers the feed, so back returns to it. The profile's own Edit-mode back
     // handler is composed deeper, so it takes precedence while editing.
-    @Suppress("DEPRECATION")
-    BackHandler(enabled = isOnePaneAtATime && openedUserId != null) { closeProfile() }
+    NavigationBackHandler(
+        state = rememberNavigationEventState(NavigationEventInfo.None),
+        isBackEnabled = isOnePaneAtATime && openedUserId != null,
+        onBackCompleted = { closeProfile() },
+    )
 
     SliideAdaptiveListDetailLayout(
         selectedItem = openedUserId,
