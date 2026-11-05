@@ -20,7 +20,6 @@ import com.androidlearning.sliide.users.domain.UserApiClient
 import com.androidlearning.sliide.users.domain.UserRepository
 import com.androidlearning.sliide.users.domain.UserSyncScheduler
 import com.androidlearning.sliide.users.domain.model.RemoteUser
-import com.androidlearning.sliide.users.domain.model.SyncReport
 import com.androidlearning.sliide.users.domain.model.User
 import com.androidlearning.sliide.users.domain.model.UserDetails
 import com.androidlearning.sliide.users.domain.model.WriteStatus
@@ -68,7 +67,7 @@ class OfflineFirstUserRepository(
 ) : UserRepository {
     private val writeMutex = Mutex()
     private val syncStateMutex = Mutex()
-    private var inFlightSync: Deferred<Result<SyncReport, DataError.Remote>>? = null
+    private var inFlightSync: Deferred<EmptyResult<DataError.Remote>>? = null
 
     /**
      * Temp ids whose CREATE synced in this process, mapped to their server id, so a delete still holding the temp id
@@ -251,7 +250,7 @@ class OfflineFirstUserRepository(
      * Already outlives its caller: the pass is started in [applicationScope] and callers only await it, so a cancelled
      * caller stops waiting while the pass (shared by every concurrent caller) runs on.
      */
-    override suspend fun syncPending(): Result<SyncReport, DataError.Remote> {
+    override suspend fun syncPending(): EmptyResult<DataError.Remote> {
         val pass =
             syncStateMutex.withLock {
                 inFlightSync?.takeIf { it.isActive }
@@ -264,15 +263,8 @@ class OfflineFirstUserRepository(
      * Sends only [userId]'s entry (spec: offline-sync, single-user replay). No single-flight of its own: [replayEntry]'s
      * lock and re-read already stop a full pass and this call from sending the same entry twice.
      */
-    override suspend fun syncPending(userId: Long): Result<SyncReport, DataError.Remote> =
-        outlivingCaller {
-            when (val outcome = replayEntry(userId)) {
-                EntryOutcome.Synced -> Result.Success(SyncReport(synced = 1, rejected = 0))
-                EntryOutcome.Rejected -> Result.Success(SyncReport(synced = 0, rejected = 1))
-                EntryOutcome.Skipped -> Result.Success(SyncReport(synced = 0, rejected = 0))
-                is EntryOutcome.Kept -> Result.Failure(outcome.error)
-            }
-        }
+    override suspend fun syncPending(userId: Long): EmptyResult<DataError.Remote> =
+        outlivingCaller { listOf(replayEntry(userId)).toSyncResult() }
 
     /**
      * Refresh = replay first, then replace the cache with the last page. The cache is replaced only when nothing is
@@ -313,21 +305,8 @@ class OfflineFirstUserRepository(
      * entry queued for the next sync and the pass carries on. Returns the first kept error, if any. Sync never rolls the
      * cached users back: the next [refresh] replaces the list with the server's.
      */
-    private suspend fun sendQueuedWrites(): Result<SyncReport, DataError.Remote> {
-        var synced = 0
-        var rejected = 0
-        var firstKeptError: DataError.Remote? = null
-        for ((user) in pendingSyncDao.getAllOrdered()) {
-            when (val outcome = replayEntry(user.id)) {
-                EntryOutcome.Synced -> synced++
-                EntryOutcome.Rejected -> rejected++
-                is EntryOutcome.Kept -> if (firstKeptError == null) firstKeptError = outcome.error
-                EntryOutcome.Skipped -> Unit
-            }
-        }
-        return firstKeptError?.let { Result.Failure(it) }
-            ?: Result.Success(SyncReport(synced = synced, rejected = rejected))
-    }
+    private suspend fun sendQueuedWrites(): EmptyResult<DataError.Remote> =
+        pendingSyncDao.getAllOrdered().map { replayEntry(it.user.id) }.toSyncResult()
 
     /**
      * Sends [userId]'s pending entry, if any, under [writeMutex]. Shared by the full pass and the per-user sync, so both
@@ -462,3 +441,9 @@ private sealed interface EntryOutcome {
         val error: DataError.Remote,
     ) : EntryOutcome
 }
+
+/** The first kept entry's error fails the sync; synced, rejected and skipped entries all count as done. */
+private fun List<EntryOutcome>.toSyncResult(): EmptyResult<DataError.Remote> =
+    firstNotNullOfOrNull { (it as? EntryOutcome.Kept)?.error }
+        ?.let { Result.Failure(it) }
+        ?: Result.Success(Unit)

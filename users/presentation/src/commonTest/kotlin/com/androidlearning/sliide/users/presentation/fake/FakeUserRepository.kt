@@ -4,7 +4,6 @@ import com.androidlearning.sliide.core.domain.util.DataError
 import com.androidlearning.sliide.core.domain.util.EmptyResult
 import com.androidlearning.sliide.core.domain.util.Result
 import com.androidlearning.sliide.users.domain.UserRepository
-import com.androidlearning.sliide.users.domain.model.SyncReport
 import com.androidlearning.sliide.users.domain.model.User
 import com.androidlearning.sliide.users.domain.model.UserDetails
 import com.androidlearning.sliide.users.domain.model.WriteStatus
@@ -35,7 +34,7 @@ class FakeUserRepository : UserRepository {
     var updateResult: Result<WriteStatus, DataError> = Result.Success(WriteStatus.SYNCED)
     var deleteResult: Result<WriteStatus, DataError> = Result.Success(WriteStatus.SYNCED)
     var refreshResult: EmptyResult<DataError> = Result.Success(Unit)
-    var syncResult: Result<SyncReport, DataError.Remote> = Result.Success(SyncReport(synced = 0, rejected = 0))
+    var syncResult: EmptyResult<DataError.Remote> = Result.Success(Unit)
 
     var observeDelay: Duration = Duration.ZERO
 
@@ -75,9 +74,9 @@ class FakeUserRepository : UserRepository {
         return deleteResult
     }
 
-    override suspend fun syncPending(): Result<SyncReport, DataError.Remote> = syncResult
+    override suspend fun syncPending(): EmptyResult<DataError.Remote> = syncResult
 
-    override suspend fun syncPending(userId: Long): Result<SyncReport, DataError.Remote> = syncResult
+    override suspend fun syncPending(userId: Long): EmptyResult<DataError.Remote> = syncResult
 
     override suspend fun refresh(): EmptyResult<DataError> {
         refreshCount++

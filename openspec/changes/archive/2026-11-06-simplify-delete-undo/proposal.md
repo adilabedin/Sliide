@@ -24,6 +24,9 @@ feed hiding the card in the meantime.
   scope. Backgrounding, rotation and opening other screens still let the window finish. Only process death drops it,
   and then the cache was never changed, so the user simply stays.
 - A user created offline whose CREATE syncs during the window is still deleted on the server, under its new server id.
+- **BREAKING (internal API)**: `SyncReport` is removed. Nothing in the app read its synced / rejected counts, so both
+  `syncPending` overloads return `EmptyResult<DataError.Remote>`: failure is the first kept entry's error, success
+  otherwise. A rejected replay still only drops its entry.
 
 ## Capabilities
 
@@ -38,14 +41,16 @@ _None._
 - `user-cache`: "Delete is local until finalised" (remove / restore) is replaced by "Deletes apply locally first".
 - `offline-sync`: replay no longer skips users inside an Undo window; a delete of a temp user that was re-keyed during
   the window targets the server id.
+  A sync no longer reports how many entries were synced or rejected.
 - `operation-lifetime`: the list of repository operations drops local remove and restore, and "finalise delete"
   becomes "delete".
 
 ## Impact
 
-- `:users:domain`: `UserRepository` delete API.
-- `:users:data`: `OfflineFirstUserRepository` (delete, replay, refresh, temp-id tracking) and its tests; the fake
-  repository used by presentation tests.
+- `:users:domain`: `UserRepository` delete API; `syncPending` return type; `SyncReport` deleted.
+- `:users:data`: `OfflineFirstUserRepository` (delete, replay, refresh, temp-id tracking, sync result),
+  `BackgroundUserSync` (`BackgroundSyncOutcome.Synced` carries no report) and their tests; the fake repository used by
+  presentation tests.
 - `:core:domain`: an `ApplicationScope` type replaces the `ApplicationScope` Koin qualifier in `:core:data`, so
   presentation can inject the app-wide scope without depending on data.
 - `:users:presentation`: `UsersViewModel` (owns the window), `ProfileViewModel` / `ProfileEvent` (hand-off),

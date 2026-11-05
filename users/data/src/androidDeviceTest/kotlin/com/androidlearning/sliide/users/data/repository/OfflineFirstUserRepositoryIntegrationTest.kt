@@ -22,7 +22,6 @@ import com.androidlearning.sliide.users.data.fake.FakeUserApiClient
 import com.androidlearning.sliide.users.data.fake.TestClock
 import com.androidlearning.sliide.users.domain.UserSyncScheduler
 import com.androidlearning.sliide.users.domain.model.Gender
-import com.androidlearning.sliide.users.domain.model.SyncReport
 import com.androidlearning.sliide.users.domain.model.UserDetails
 import com.androidlearning.sliide.users.domain.model.UserStatus
 import com.androidlearning.sliide.users.domain.model.WriteStatus
@@ -129,7 +128,7 @@ class OfflineFirstUserRepositoryIntegrationTest {
             apiClient.nextServerId = 7001
             val report = repository().syncPending()
 
-            assertThat(report).isEqualTo(Result.Success(SyncReport(synced = 1, rejected = 0)))
+            assertThat(report).isEqualTo(Result.Success(Unit))
             assertThat(database.userDao.getAll().map { it.id }).containsExactly(7001L)
             assertThat(database.pendingSyncDao.count()).isEqualTo(0)
         }
@@ -144,7 +143,7 @@ class OfflineFirstUserRepositoryIntegrationTest {
             val report = repository().syncPending()
             reopenDatabase()
 
-            assertThat(report).isEqualTo(Result.Success(SyncReport(synced = 0, rejected = 1)))
+            assertThat(report).isEqualTo(Result.Success(Unit))
             // The temp user stays until the next refresh replaces the cached list (spec: offline-sync).
             assertThat(database.userDao.getAll().map { it.name }).containsExactly("Jane Doe")
             assertThat(database.pendingSyncDao.count()).isEqualTo(0)

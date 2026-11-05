@@ -3,7 +3,6 @@ package com.androidlearning.sliide.users.domain
 import com.androidlearning.sliide.core.domain.util.DataError
 import com.androidlearning.sliide.core.domain.util.EmptyResult
 import com.androidlearning.sliide.core.domain.util.Result
-import com.androidlearning.sliide.users.domain.model.SyncReport
 import com.androidlearning.sliide.users.domain.model.User
 import com.androidlearning.sliide.users.domain.model.UserDetails
 import com.androidlearning.sliide.users.domain.model.WriteStatus
@@ -50,17 +49,17 @@ interface UserRepository {
     /**
      * Sends every pending entry once, oldest first, one at a time. An entry that fails in a way that may later succeed
      * stays queued for the next sync and the pass carries on; the first such error is returned.
-     * A rejected entry is only deleted from the queue and counted in [SyncReport.rejected]; the cached users are left
-     * as they are until the next [refresh] replaces the list with the server's. Concurrent calls share one pass.
+     * A rejected entry is only deleted from the queue; the cached users are left as they are until the next [refresh]
+     * replaces the list with the server's. Concurrent calls share one pass.
      */
-    suspend fun syncPending(): Result<SyncReport, DataError.Remote>
+    suspend fun syncPending(): EmptyResult<DataError.Remote>
 
     /**
      * Sends at most [userId]'s pending entry, with the same success and rejection rules as [syncPending],
-     * and leaves every other entry untouched. With no entry for [userId] it sends nothing and reports zero. It may run
+     * and leaves every other entry untouched. With no entry for [userId] it sends nothing and succeeds. It may run
      * alongside a full pass; no entry is ever sent twice.
      */
-    suspend fun syncPending(userId: Long): Result<SyncReport, DataError.Remote>
+    suspend fun syncPending(userId: Long): EmptyResult<DataError.Remote>
 
     /**
      * Runs [syncPending]; only if the queue is then empty, fetches the last page of `/users` and replaces the cache

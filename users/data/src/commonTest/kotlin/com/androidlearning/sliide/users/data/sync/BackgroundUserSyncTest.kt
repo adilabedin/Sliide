@@ -19,7 +19,6 @@ import com.androidlearning.sliide.users.data.repository.emailTaken
 import com.androidlearning.sliide.users.data.repository.remoteUser
 import com.androidlearning.sliide.users.data.repository.userEntity
 import com.androidlearning.sliide.users.domain.UserRepository
-import com.androidlearning.sliide.users.domain.model.SyncReport
 import com.androidlearning.sliide.users.domain.model.User
 import com.androidlearning.sliide.users.domain.model.UserDetails
 import com.androidlearning.sliide.users.domain.model.WriteStatus
@@ -40,7 +39,7 @@ class BackgroundUserSyncTest {
 
             val outcome = BackgroundUserSync(h.repository).run()
 
-            assertThat(outcome).isEqualTo(BackgroundSyncOutcome.Synced(SyncReport(synced = 0, rejected = 0)))
+            assertThat(outcome).isEqualTo(BackgroundSyncOutcome.Synced)
             assertThat(h.apiClient.requests).isEmpty()
         }
 
@@ -52,7 +51,7 @@ class BackgroundUserSyncTest {
 
             val outcome = BackgroundUserSync(h.repository).run()
 
-            assertThat(outcome).isEqualTo(BackgroundSyncOutcome.Synced(SyncReport(synced = 1, rejected = 0)))
+            assertThat(outcome).isEqualTo(BackgroundSyncOutcome.Synced)
             assertThat(h.apiClient.requests)
                 .containsExactly(RemoteRequest.Update(1, details(name = "User 1", email = "user1@example.com")))
             assertThat(h.pendingSyncDao.entries).isEmpty()
@@ -82,7 +81,7 @@ class BackgroundUserSyncTest {
 
             val outcome = BackgroundUserSync(h.repository).run()
 
-            assertThat(outcome).isEqualTo(BackgroundSyncOutcome.Synced(SyncReport(synced = 1, rejected = 1)))
+            assertThat(outcome).isEqualTo(BackgroundSyncOutcome.Synced)
             assertThat(h.pendingSyncDao.entries).isEmpty()
             // The cache is left to the next foreground refresh; a background run never replaces it.
             assertThat(h.userDao.users.map { it.id }).containsExactlyInAnyOrder(-1L, 2L)
@@ -115,7 +114,7 @@ class BackgroundUserSyncTest {
             advanceUntilIdle()
             gate.complete(Unit)
 
-            assertThat(background.await()).isEqualTo(BackgroundSyncOutcome.Synced(SyncReport(synced = 1, rejected = 0)))
+            assertThat(background.await()).isEqualTo(BackgroundSyncOutcome.Synced)
             refresh.await()
             assertThat(h.apiClient.requests.filterIsInstance<RemoteRequest.Update>()).single()
         }
@@ -129,7 +128,7 @@ class BackgroundUserSyncTest {
 
             val outcome = BackgroundUserSync(h.repository).run(userId = 42)
 
-            assertThat(outcome).isEqualTo(BackgroundSyncOutcome.Synced(SyncReport(synced = 1, rejected = 0)))
+            assertThat(outcome).isEqualTo(BackgroundSyncOutcome.Synced)
             assertThat(
                 h.apiClient.requests
                     .filterIsInstance<RemoteRequest.Update>()
@@ -190,9 +189,9 @@ class BackgroundUserSyncTest {
     private class ThrowingSyncRepository(
         private val error: Throwable,
     ) : UserRepository {
-        override suspend fun syncPending(): Result<SyncReport, DataError.Remote> = throw error
+        override suspend fun syncPending(): EmptyResult<DataError.Remote> = throw error
 
-        override suspend fun syncPending(userId: Long): Result<SyncReport, DataError.Remote> = throw error
+        override suspend fun syncPending(userId: Long): EmptyResult<DataError.Remote> = throw error
 
         override fun observeUsers(): Flow<List<User>> = error("unused")
 

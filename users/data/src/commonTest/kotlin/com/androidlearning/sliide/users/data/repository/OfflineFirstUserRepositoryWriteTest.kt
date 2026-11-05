@@ -557,10 +557,7 @@ class OfflineFirstUserRepositoryWriteTest {
 
             assertThat(before.single().operation).isEqualTo(PendingOperation.CREATE)
             assertThat(report).isEqualTo(
-                Result.Success(
-                    com.androidlearning.sliide.users.domain.model
-                        .SyncReport(synced = 1, rejected = 0),
-                ),
+                Result.Success(Unit),
             )
             assertThat(h.apiClient.requests.last()).isEqualTo(RemoteRequest.Create(details()))
         }

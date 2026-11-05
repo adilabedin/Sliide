@@ -21,8 +21,7 @@ same success and rejection rules as a full replay, and SHALL leave every other u
 
 #### Scenario: Single-user replay rejected
 - **WHEN** a pending CREATE for temporary id -1 is replayed on its own and the API responds 422
-- **THEN** the entry is removed, the sync result counts one rejected write, and the cache is left for the next refresh,
-  as in a full replay
+- **THEN** the entry is removed, the sync succeeds, and the cache is left for the next refresh, as in a full replay
 
 #### Scenario: Single-user replay keeps a retryable failure
 - **WHEN** a pending UPDATE for user 42 is replayed on its own and the API responds 503
@@ -36,6 +35,33 @@ same success and rejection rules as a full replay, and SHALL leave every other u
 #### Scenario: No pending entry
 - **WHEN** a single-user replay runs for a user with no pending entry
 - **THEN** no request is sent and nothing changes
+
+### Requirement: Permanently rejected replays are dropped
+If a replayed entry fails with an error that is not kept for a later sync, the system SHALL delete the entry without
+recording it anywhere; it does not fail the sync. Sync SHALL NOT change the cached users for it: the next refresh
+replaces the cached list with the server's, which removes a temporary user whose create was rejected, brings back a user
+whose delete was refused, and drops a user that no longer exists. Replay SHALL then continue with the next entry.
+
+#### Scenario: Replayed create rejected
+- **WHEN** a pending CREATE is replayed and the API responds 422 with a field error
+- **THEN** the entry is removed, the sync succeeds, and the next refresh removes the user with the temporary id from
+  the cache
+
+#### Scenario: Replayed delete rejected
+- **WHEN** a pending DELETE is replayed and the API responds 422
+- **THEN** the entry is removed and the sync succeeds
+
+#### Scenario: Replayed update for a user that no longer exists
+- **WHEN** a pending UPDATE is replayed and the API responds 404
+- **THEN** the entry is removed and the sync succeeds
+
+#### Scenario: Replayed update rejected
+- **WHEN** a pending UPDATE is replayed and the API responds 422
+- **THEN** the entry is removed and the cached user keeps the locally edited data until the next refresh
+
+#### Scenario: Replayed write with an unexpected status
+- **WHEN** a pending CREATE is replayed and the API responds 400
+- **THEN** the entry is removed and replay continues with the next entry
 
 ## ADDED Requirements
 

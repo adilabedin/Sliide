@@ -57,6 +57,15 @@
   the ViewModel sends the pending delete". Verify: `./gradlew :users:presentation:allTests` passes.
 - [x] 4.4 Update README and re-run `./gradlew build`, the iOS link and ktlint. Verify: all succeed.
 
+## 5. Drop `SyncReport`
+
+- [x] 5.1 Return `EmptyResult<DataError.Remote>` from both `syncPending` overloads, delete `SyncReport`, build the result
+  in one `toSyncResult()` helper used by `sendQueuedWrites` and `syncPending(userId)`, and make
+  `BackgroundSyncOutcome.Synced` a `data object` (design D7). Verify: `:users:domain`, `:users:data` compile.
+- [x] 5.2 Update the sync, single-user, concurrency, write, background and integration tests and `FakeUserRepository`
+  to the new type; reduce the policy-parity test to KEPT vs DROPPED. Verify: `./gradlew build`, the iOS link and
+  ktlint succeed.
+
 ## Workflow follow-up
 
 - Archive the change after review (`/opsx:archive`), which merges the deltas into `openspec/specs`.

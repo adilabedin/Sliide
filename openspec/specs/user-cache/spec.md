@@ -42,18 +42,6 @@ An updated user SHALL be written to the cache before the network call completes.
 - **WHEN** a user's name is changed and the API call fails because there is no internet
 - **THEN** the feed shows the new name
 
-### Requirement: Delete is local until finalised
-Removing a user SHALL take it out of the cache with no network call. Restoring that user before the delete is finalised
-SHALL put back the exact previous data, also with no network call.
-
-#### Scenario: Undo a delete
-- **WHEN** a user is removed and then restored before the delete is finalised
-- **THEN** the user is back in the feed with identical data, and no API request was made
-
-#### Scenario: Delete never finalised
-- **WHEN** a user is removed and the app terminates before the delete is finalised
-- **THEN** the user is not deleted on the server, and the next successful refresh may show it again
-
 ### Requirement: Permanent failures roll back the local write
 If the API rejects a write with a non-retryable error, the system SHALL undo that write in the cache and return the
 error to the caller.
@@ -89,3 +77,15 @@ A refresh SHALL first replay every pending write. Only if no pending writes rema
 #### Scenario: Locally created users are dropped by the refresh
 - **WHEN** a user created in the app has synced, and a later refresh fetches a last page that does not contain it
 - **THEN** that user is no longer in the cache
+
+### Requirement: Deletes apply locally first
+Deleting a user SHALL remove it from the cache before the network call completes. A user with a temporary id SHALL be
+removed locally and its pending create cancelled, with no network call.
+
+#### Scenario: Delete while offline
+- **WHEN** user 42 is deleted and the API call fails because there is no internet
+- **THEN** the feed no longer shows user 42 and the delete is queued
+
+#### Scenario: Delete of a never-synced user
+- **WHEN** a user with temporary id -1 and a pending CREATE is deleted
+- **THEN** the user is removed from the cache, no pending entry remains, and no API request is made

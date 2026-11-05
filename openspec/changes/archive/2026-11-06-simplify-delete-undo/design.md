@@ -81,6 +81,16 @@ The finalise job already runs in `UsersViewModel`, so its result maps straight t
 "refused" / "couldn't delete", `QUEUED_AUTH_FAILED` → auth message, `SYNCED` / `QUEUED` → nothing. `DeleteMessage` and
 the controller's channel go.
 
+### D7. Sync returns success or the first kept error, no counts
+`SyncReport(synced, rejected)` was only read by tests: `refresh` checks failure, and the background runners treat every
+outcome as a finished run. Both `syncPending` overloads now return `EmptyResult<DataError.Remote>`, built by one helper
+from the per-entry outcomes, so the full pass and the single-user replay can't disagree. Tests assert the queue and the
+cache instead of the counts. Replay's synced-vs-rejected split (a 404 DELETE vs a refused one) has no other observable
+effect, so the policy-parity test compares KEPT vs DROPPED.
+
+Single-flight (`syncStateMutex` + `inFlightSync`) stays. It only saves a duplicate full pass when a refresh and the
+periodic sync overlap; `writeMutex` and the re-read in `replayEntry` are what stop an entry being sent twice.
+
 ## Risks / Trade-offs
 
 - [The process is killed within 5 s of a confirm] → The delete is never sent and the user stays. The cache was never
