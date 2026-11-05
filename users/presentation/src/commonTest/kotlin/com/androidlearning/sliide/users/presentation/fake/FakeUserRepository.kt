@@ -19,8 +19,9 @@ import kotlin.time.Duration
  * In-memory [UserRepository] for presentation tests.
  *
  * - The cache emits nothing until [emit] is called, so tests can observe the initial loading state.
- * - [removeUserLocally] / [restoreUser] edit the emitted list like the real repository. A failed [finalizeDelete]
- *   leaves the user removed, as the real repository does until the next refresh.
+ * - [deleteUser] removes the user from the emitted list, like the real repository, once [deleteGate] (if any) opens,
+ *   so tests can hold the moment before the cache changes. A failed delete leaves the user removed, as the real
+ *   repository does until the next refresh.
  * - [observeDelay] holds back each new subscriber's first list, as Room's query does, so a resubscribing feed can be
  *   seen before the cache answers.
  * - Every method records its calls; results are scripted through the `*Result` vars; a non-null `*Gate` suspends the
@@ -32,7 +33,7 @@ class FakeUserRepository : UserRepository {
 
     var createResult: Result<WriteStatus, DataError> = Result.Success(WriteStatus.SYNCED)
     var updateResult: Result<WriteStatus, DataError> = Result.Success(WriteStatus.SYNCED)
-    var finalizeResult: Result<WriteStatus, DataError> = Result.Success(WriteStatus.SYNCED)
+    var deleteResult: Result<WriteStatus, DataError> = Result.Success(WriteStatus.SYNCED)
     var refreshResult: EmptyResult<DataError> = Result.Success(Unit)
     var syncResult: Result<SyncReport, DataError.Remote> = Result.Success(SyncReport(synced = 0, rejected = 0))
 
@@ -40,13 +41,11 @@ class FakeUserRepository : UserRepository {
 
     var refreshGate: CompletableDeferred<Unit>? = null
     var saveGate: CompletableDeferred<Unit>? = null
-    var finalizeGate: CompletableDeferred<Unit>? = null
+    var deleteGate: CompletableDeferred<Unit>? = null
 
     val createdDetails = mutableListOf<UserDetails>()
     val updatedUsers = mutableListOf<User>()
-    val removedIds = mutableListOf<Long>()
-    val restoredUsers = mutableListOf<User>()
-    val finalizedUsers = mutableListOf<User>()
+    val deletedUsers = mutableListOf<User>()
     var refreshCount = 0
         private set
 
@@ -69,22 +68,11 @@ class FakeUserRepository : UserRepository {
         return updateResult
     }
 
-    override suspend fun removeUserLocally(id: Long): Result<User, DataError.Local> {
-        removedIds += id
-        val user = current.firstOrNull { it.id == id } ?: return Result.Failure(DataError.Local.NOT_FOUND)
-        emit(current - user)
-        return Result.Success(user)
-    }
-
-    override suspend fun restoreUser(user: User) {
-        restoredUsers += user
-        emit((current + user).sortedByDescending { it.createdAt })
-    }
-
-    override suspend fun finalizeDelete(user: User): Result<WriteStatus, DataError> {
-        finalizedUsers += user
-        finalizeGate?.await()
-        return finalizeResult
+    override suspend fun deleteUser(user: User): Result<WriteStatus, DataError> {
+        deletedUsers += user
+        deleteGate?.await()
+        emit(current.filterNot { it.id == user.id })
+        return deleteResult
     }
 
     override suspend fun syncPending(): Result<SyncReport, DataError.Remote> = syncResult

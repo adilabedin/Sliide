@@ -44,10 +44,9 @@ class OfflineFirstUserRepositorySyncRequestTest {
         runTest {
             val h = RepositoryHarness(backgroundScope)
             val user = h.seedUser(userEntity(42)).toUser()
-            h.repository.removeUserLocally(42)
             h.apiClient.defaultError = DataError.Remote.NO_INTERNET
 
-            h.repository.finalizeDelete(user)
+            h.repository.deleteUser(user)
 
             assertThat(h.syncScheduler.requestedUserIds).containsExactly(42L)
         }
@@ -78,8 +77,7 @@ class OfflineFirstUserRepositorySyncRequestTest {
 
             h.repository.createUser(details())
             h.repository.updateUser(user.copy(name = "New"))
-            h.repository.removeUserLocally(42)
-            h.repository.finalizeDelete(user)
+            h.repository.deleteUser(user)
 
             assertThat(h.syncScheduler.requestedUserIds).isEmpty()
         }
@@ -93,8 +91,7 @@ class OfflineFirstUserRepositorySyncRequestTest {
 
             h.repository.createUser(details())
             h.repository.updateUser(user.copy(name = "New"))
-            h.repository.removeUserLocally(42)
-            h.repository.finalizeDelete(user)
+            h.repository.deleteUser(user)
 
             assertThat(h.syncScheduler.requestedUserIds).isEmpty()
         }
@@ -109,8 +106,7 @@ class OfflineFirstUserRepositorySyncRequestTest {
             h.apiClient.deleteResults += Result.Failure(DataError.Remote.NOT_FOUND)
 
             h.repository.updateUser(updated.copy(name = "New"))
-            h.repository.removeUserLocally(42)
-            h.repository.finalizeDelete(deleted)
+            h.repository.deleteUser(deleted)
 
             assertThat(h.syncScheduler.requestedUserIds).isEmpty()
         }
@@ -121,9 +117,9 @@ class OfflineFirstUserRepositorySyncRequestTest {
             val h = RepositoryHarness(backgroundScope)
             h.apiClient.defaultError = DataError.Remote.NO_INTERNET
             h.repository.createUser(details())
-            val temp = (h.repository.removeUserLocally(-1) as Result.Success).data
+            val temp = h.userDao.getById(-1)!!.toUser()
 
-            h.repository.finalizeDelete(temp)
+            h.repository.deleteUser(temp)
 
             // Only the create's own request: the cancelled pair leaves nothing to sync.
             assertThat(h.syncScheduler.requestedUserIds).containsExactly(-1L)

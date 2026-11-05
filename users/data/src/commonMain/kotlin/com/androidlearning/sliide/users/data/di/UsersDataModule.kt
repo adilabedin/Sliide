@@ -1,6 +1,6 @@
 package com.androidlearning.sliide.users.data.di
 
-import com.androidlearning.sliide.core.data.di.ApplicationScope
+import com.androidlearning.sliide.core.domain.util.ApplicationScope
 import com.androidlearning.sliide.users.data.remote.KtorUserApiClient
 import com.androidlearning.sliide.users.data.repository.OfflineFirstUserRepository
 import com.androidlearning.sliide.users.data.sync.BackgroundUserSync
@@ -24,7 +24,7 @@ val usersDataModule =
                 transactionRunner = get(),
                 apiClient = get(),
                 clock = get(),
-                applicationScope = get(ApplicationScope),
+                applicationScope = get<ApplicationScope>(),
                 // Bound per platform in platformUserSyncModule.
                 syncScheduler = get(),
             )

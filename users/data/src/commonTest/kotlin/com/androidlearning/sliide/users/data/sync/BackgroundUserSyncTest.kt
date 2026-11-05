@@ -200,11 +200,7 @@ class BackgroundUserSyncTest {
 
         override suspend fun updateUser(user: User): Result<WriteStatus, DataError> = error("unused")
 
-        override suspend fun removeUserLocally(id: Long): Result<User, DataError.Local> = error("unused")
-
-        override suspend fun restoreUser(user: User) = error("unused")
-
-        override suspend fun finalizeDelete(user: User): Result<WriteStatus, DataError> = error("unused")
+        override suspend fun deleteUser(user: User): Result<WriteStatus, DataError> = error("unused")
 
         override suspend fun refresh(): EmptyResult<DataError> = error("unused")
     }

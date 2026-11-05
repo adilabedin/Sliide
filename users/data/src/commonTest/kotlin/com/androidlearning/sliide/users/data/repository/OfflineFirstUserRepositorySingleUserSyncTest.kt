@@ -76,20 +76,6 @@ class OfflineFirstUserRepositorySingleUserSyncTest {
         }
 
     @Test
-    fun userInsideTheUndoWindowIsSkippedAndStaysQueued() =
-        runTest {
-            val h = RepositoryHarness(backgroundScope)
-            val entry = h.seedPending(h.seedUser(userEntity(42)), PendingOperation.UPDATE)
-            h.repository.removeUserLocally(42)
-
-            val result = h.repository.syncPending(userId = 42)
-
-            assertThat(result).isEqualTo(Result.Success(SyncReport(synced = 0, rejected = 0)))
-            assertThat(h.apiClient.requests).isEmpty()
-            assertThat(h.pendingSyncDao.entries).containsExactly(entry)
-        }
-
-    @Test
     fun userWithNoPendingEntrySendsNothing() =
         runTest {
             val h = RepositoryHarness(backgroundScope)

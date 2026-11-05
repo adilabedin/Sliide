@@ -5,17 +5,17 @@ import assertk.assertions.containsExactly
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isNull
-import assertk.assertions.single
 import com.androidlearning.sliide.core.database.PendingOperation
 import com.androidlearning.sliide.core.domain.util.DataError
 import com.androidlearning.sliide.core.domain.util.Result
 import com.androidlearning.sliide.users.data.fake.RemoteRequest
 import com.androidlearning.sliide.users.data.mapper.toUser
 import com.androidlearning.sliide.users.domain.model.SyncReport
+import com.androidlearning.sliide.users.domain.model.WriteStatus
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 
-/** Replay of the outbox: spec offline-sync (order, outcomes, re-key, rejections, Undo guard). */
+/** Replay of the outbox: spec offline-sync (order, outcomes, re-key, rejections). */
 class OfflineFirstUserRepositorySyncTest {
     @Test
     fun emptyQueueReplaysNothing() =
@@ -89,8 +89,7 @@ class OfflineFirstUserRepositorySyncTest {
             assertThat(h.pendingSyncDao.entries).isEmpty()
 
             val synced = h.userDao.getById(7012)!!.toUser()
-            h.repository.removeUserLocally(7012)
-            h.repository.finalizeDelete(synced)
+            h.repository.deleteUser(synced)
 
             assertThat(h.apiClient.requests.last()).isEqualTo(RemoteRequest.Delete(7012))
             assertThat(h.userDao.users).isEmpty()
@@ -260,52 +259,22 @@ class OfflineFirstUserRepositorySyncTest {
         }
 
     @Test
-    fun entryInsideUndoWindowIsSkippedButKept() =
+    fun deleteUnderTempIdAfterCreateSyncedDeletesTheServerUser() =
         runTest {
-            val h = RepositoryHarness(backgroundScope)
-            h.seedPending(h.seedUser(userEntity(42, name = "Edited")), PendingOperation.UPDATE)
-            h.repository.removeUserLocally(42)
-
-            val result = h.repository.syncPending()
-
-            assertThat(result).isEqualTo(Result.Success(SyncReport(synced = 0, rejected = 0)))
-            assertThat(h.apiClient.requests).isEmpty()
-            assertThat(
-                h.pendingSyncDao.entries
-                    .single()
-                    .user.id,
-            ).isEqualTo(42L)
-        }
-
-    @Test
-    fun offlineCreatedUserRemovedDuringReplayThenFinalisedSendsNothing() =
-        runTest {
+            // Spec offline-sync: "CREATE syncs during the Undo window".
             val h = RepositoryHarness(backgroundScope)
             h.apiClient.defaultError = DataError.Remote.NO_INTERNET
             h.repository.createUser(details())
+            val hidden = h.userDao.getById(-1)!!.toUser()
             h.apiClient.defaultError = null
-            val requestsBefore = h.apiClient.requests.size
-
-            val removed = (h.repository.removeUserLocally(-1) as Result.Success).data
+            h.apiClient.createResults += Result.Success(remoteUser(7012, name = "Jane Doe", email = "jane@example.com"))
             h.repository.syncPending()
-            h.repository.finalizeDelete(removed)
 
-            assertThat(h.apiClient.requests.size).isEqualTo(requestsBefore)
-            assertThat(h.pendingSyncDao.entries).isEmpty()
+            val result = h.repository.deleteUser(hidden)
+
+            assertThat(result).isEqualTo(Result.Success(WriteStatus.SYNCED))
+            assertThat(h.apiClient.requests.last()).isEqualTo(RemoteRequest.Delete(7012))
             assertThat(h.userDao.users).isEmpty()
-        }
-
-    @Test
-    fun undoneRemovalIsReplayedAgain() =
-        runTest {
-            val h = RepositoryHarness(backgroundScope)
-            val edited = h.seedUser(userEntity(42, name = "Edited"))
-            h.seedPending(edited, PendingOperation.UPDATE)
-            val removed = (h.repository.removeUserLocally(42) as Result.Success).data
-            h.repository.restoreUser(removed)
-
-            h.repository.syncPending()
-
-            assertThat(h.apiClient.requests).containsExactly(RemoteRequest.Update(42, details(name = "Edited", email = edited.email)))
+            assertThat(h.pendingSyncDao.entries).isEmpty()
         }
 }

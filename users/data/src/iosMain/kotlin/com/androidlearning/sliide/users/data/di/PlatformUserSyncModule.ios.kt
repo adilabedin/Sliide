@@ -1,6 +1,6 @@
 package com.androidlearning.sliide.users.data.di
 
-import com.androidlearning.sliide.core.data.di.ApplicationScope
+import com.androidlearning.sliide.core.domain.util.ApplicationScope
 import com.androidlearning.sliide.users.data.sync.BackgroundTaskUserSyncScheduler
 import com.androidlearning.sliide.users.data.sync.ConnectivityCheck
 import com.androidlearning.sliide.users.data.sync.NwPathConnectivityCheck
@@ -16,7 +16,7 @@ actual val platformUserSyncModule: Module =
                 // Lazy: BackgroundUserSync → repository → this scheduler would otherwise be a cycle.
                 backgroundUserSync = { get() },
                 connectivityCheck = get(),
-                applicationScope = get(ApplicationScope),
+                applicationScope = get<ApplicationScope>(),
             )
         }
     }

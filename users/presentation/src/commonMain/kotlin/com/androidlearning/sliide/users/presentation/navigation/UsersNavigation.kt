@@ -58,5 +58,7 @@ private fun CreateUserRoot(
         showBackButton = true,
         onClose = { onNavigateBack() },
         onCreated = onCreated,
+        // Create mode has no Delete button.
+        onDeleteConfirmed = {},
     )
 }

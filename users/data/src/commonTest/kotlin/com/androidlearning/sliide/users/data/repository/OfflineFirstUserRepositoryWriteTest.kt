@@ -5,7 +5,6 @@ import assertk.assertThat
 import assertk.assertions.containsExactly
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
-import assertk.assertions.isNotNull
 import assertk.assertions.isNull
 import assertk.assertions.single
 import com.androidlearning.sliide.core.database.PendingOperation
@@ -360,39 +359,15 @@ class OfflineFirstUserRepositoryWriteTest {
 
     // endregion
 
-    // region delete (local remove, restore, finalize)
+    // region delete
 
     @Test
-    fun undoRestoresIdenticalUserWithoutAnyRequest() =
-        runTest {
-            val h = RepositoryHarness(backgroundScope)
-            val original = h.seedUser(userEntity(42))
-
-            val removed = h.repository.removeUserLocally(42)
-            assertThat(h.userDao.getById(42)).isNull()
-            h.repository.restoreUser((removed as Result.Success).data)
-
-            assertThat(h.userDao.getById(42)).isEqualTo(original)
-            assertThat(h.apiClient.requests).isEmpty()
-            assertThat(h.pendingSyncDao.entries).isEmpty()
-        }
-
-    @Test
-    fun removeOfUnknownUserFailsWithNotFound() =
-        runTest {
-            val h = RepositoryHarness(backgroundScope)
-
-            assertThat(h.repository.removeUserLocally(42)).isEqualTo(Result.Failure(DataError.Local.NOT_FOUND))
-        }
-
-    @Test
-    fun finalizeDeleteOnlineSendsDelete() =
+    fun deleteOnlineSendsDelete() =
         runTest {
             val h = RepositoryHarness(backgroundScope)
             val user = h.seedUser(userEntity(42)).toUser()
-            h.repository.removeUserLocally(42)
 
-            val result = h.repository.finalizeDelete(user)
+            val result = h.repository.deleteUser(user)
 
             assertThat(result).isEqualTo(Result.Success(WriteStatus.SYNCED))
             assertThat(h.apiClient.requests).containsExactly(RemoteRequest.Delete(42))
@@ -400,27 +375,55 @@ class OfflineFirstUserRepositoryWriteTest {
         }
 
     @Test
-    fun finalizeDeleteWith404CountsAsSuccess() =
+    fun offlineDeleteRemovesTheUserLocallyAndQueuesIt() =
+        runTest {
+            // Spec user-cache: "Delete while offline".
+            val h = RepositoryHarness(backgroundScope)
+            val user = h.seedUser(userEntity(42)).toUser()
+            h.apiClient.defaultError = DataError.Remote.NO_INTERNET
+
+            h.repository.deleteUser(user)
+
+            assertThat(h.userDao.getById(42)).isNull()
+            assertThat(
+                h.pendingSyncDao.entries
+                    .single()
+                    .operation,
+            ).isEqualTo(PendingOperation.DELETE)
+        }
+
+    @Test
+    fun deleteOfAUserNoLongerCachedStillSendsDelete() =
+        runTest {
+            // A refresh may drop the user from the cache during its Undo window; the snapshot still reaches the server.
+            val h = RepositoryHarness(backgroundScope)
+
+            val result = h.repository.deleteUser(userEntity(42).toUser())
+
+            assertThat(result).isEqualTo(Result.Success(WriteStatus.SYNCED))
+            assertThat(h.apiClient.requests).containsExactly(RemoteRequest.Delete(42))
+        }
+
+    @Test
+    fun deleteWith404CountsAsSuccess() =
         runTest {
             val h = RepositoryHarness(backgroundScope)
             val user = h.seedUser(userEntity(42)).toUser()
-            h.repository.removeUserLocally(42)
             h.apiClient.deleteResults += Result.Failure(DataError.Remote.NOT_FOUND)
 
-            assertThat(h.repository.finalizeDelete(user)).isEqualTo(Result.Success(WriteStatus.SYNCED))
+            assertThat(h.repository.deleteUser(user)).isEqualTo(Result.Success(WriteStatus.SYNCED))
             assertThat(h.pendingSyncDao.entries).isEmpty()
             assertThat(h.userDao.getById(42)).isNull()
         }
 
     @Test
-    fun finalizeDeleteOfflineQueuesDelete() =
+    fun deleteOfflineQueuesDelete() =
         runTest {
             val h = RepositoryHarness(backgroundScope)
             val user = h.seedUser(userEntity(42)).toUser()
-            h.repository.removeUserLocally(42)
             h.apiClient.defaultError = DataError.Remote.NO_INTERNET
 
-            val result = h.repository.finalizeDelete(user)
+            val result = h.repository.deleteUser(user)
 
             assertThat(result).isEqualTo(Result.Success(WriteStatus.QUEUED))
             val entry = h.pendingSyncDao.entries.single()
@@ -429,14 +432,13 @@ class OfflineFirstUserRepositoryWriteTest {
         }
 
     @Test
-    fun finalizeDeleteRefusedDropsEntryAndRefreshBringsTheUserBack() =
+    fun deleteRefusedDropsEntryAndRefreshBringsTheUserBack() =
         runTest {
             val h = RepositoryHarness(backgroundScope)
             val original = h.seedUser(userEntity(42))
-            h.repository.removeUserLocally(42)
             h.apiClient.deleteResults += Result.Failure(DataError.Validation(emptyList()))
 
-            val result = h.repository.finalizeDelete(original.toUser())
+            val result = h.repository.deleteUser(original.toUser())
 
             assertThat(result).isEqualTo(Result.Failure(DataError.Validation(emptyList())))
             assertThat(h.userDao.getById(42)).isNull()
@@ -448,14 +450,13 @@ class OfflineFirstUserRepositoryWriteTest {
         }
 
     @Test
-    fun finalizeDeleteUnauthorisedKeepsUserRemovedAndIsQueuedAsAuthFailed() =
+    fun deleteUnauthorisedKeepsUserRemovedAndIsQueuedAsAuthFailed() =
         runTest {
             val h = RepositoryHarness(backgroundScope)
             val user = h.seedUser(userEntity(42)).toUser()
-            h.repository.removeUserLocally(42)
             h.apiClient.deleteResults += Result.Failure(DataError.Remote.UNAUTHORIZED)
 
-            assertThat(h.repository.finalizeDelete(user)).isEqualTo(Result.Success(WriteStatus.QUEUED_AUTH_FAILED))
+            assertThat(h.repository.deleteUser(user)).isEqualTo(Result.Success(WriteStatus.QUEUED_AUTH_FAILED))
             assertThat(h.userDao.getById(42)).isNull()
             assertThat(
                 h.pendingSyncDao.entries
@@ -465,14 +466,13 @@ class OfflineFirstUserRepositoryWriteTest {
         }
 
     @Test
-    fun finalizeDeleteOnServerUnavailableIsQueued() =
+    fun deleteOnServerUnavailableIsQueued() =
         runTest {
             val h = RepositoryHarness(backgroundScope)
             val user = h.seedUser(userEntity(42)).toUser()
-            h.repository.removeUserLocally(42)
             h.apiClient.deleteResults += Result.Failure(DataError.Remote.SERVER_ERROR)
 
-            assertThat(h.repository.finalizeDelete(user)).isEqualTo(Result.Success(WriteStatus.QUEUED))
+            assertThat(h.repository.deleteUser(user)).isEqualTo(Result.Success(WriteStatus.QUEUED))
             assertThat(h.userDao.getById(42)).isNull()
             assertThat(
                 h.pendingSyncDao.entries
@@ -482,14 +482,13 @@ class OfflineFirstUserRepositoryWriteTest {
         }
 
     @Test
-    fun finalizeDeleteWithUnexpectedStatusDropsEntryOnly() =
+    fun deleteWithUnexpectedStatusDropsEntryOnly() =
         runTest {
             val h = RepositoryHarness(backgroundScope)
             val original = h.seedUser(userEntity(42))
-            h.repository.removeUserLocally(42)
             h.apiClient.deleteResults += Result.Failure(DataError.Remote.UNKNOWN)
 
-            assertThat(h.repository.finalizeDelete(original.toUser()))
+            assertThat(h.repository.deleteUser(original.toUser()))
                 .isEqualTo(Result.Failure(DataError.Remote.UNKNOWN))
             assertThat(h.userDao.getById(42)).isNull()
             assertThat(h.pendingSyncDao.entries).isEmpty()
@@ -504,8 +503,7 @@ class OfflineFirstUserRepositoryWriteTest {
             h.repository.updateUser(original.toUser().copy(name = "Edited"))
             val edited = h.userDao.getById(42)!!.toUser()
 
-            h.repository.removeUserLocally(42)
-            h.repository.finalizeDelete(edited)
+            h.repository.deleteUser(edited)
 
             val entry = h.pendingSyncDao.entries.single()
             assertThat(entry.operation).isEqualTo(PendingOperation.DELETE)
@@ -520,8 +518,7 @@ class OfflineFirstUserRepositoryWriteTest {
             h.repository.updateUser(original.toUser().copy(name = "Edited"))
             h.apiClient.defaultError = null
 
-            h.repository.removeUserLocally(42)
-            val result = h.repository.finalizeDelete(h.userDao.getById(42)?.toUser() ?: original.toUser())
+            val result = h.repository.deleteUser(h.userDao.getById(42)?.toUser() ?: original.toUser())
 
             assertThat(result).isEqualTo(Result.Success(WriteStatus.SYNCED))
             assertThat(h.pendingSyncDao.entries).isEmpty()
@@ -536,8 +533,8 @@ class OfflineFirstUserRepositoryWriteTest {
             h.apiClient.defaultError = null
             val requestsBefore = h.apiClient.requests.size
 
-            val removed = (h.repository.removeUserLocally(-1) as Result.Success).data
-            val result = h.repository.finalizeDelete(removed)
+            val temp = h.userDao.getById(-1)!!.toUser()
+            val result = h.repository.deleteUser(temp)
 
             assertThat(result).isEqualTo(Result.Success(WriteStatus.SYNCED))
             assertThat(h.pendingSyncDao.entries).isEmpty()
@@ -545,27 +542,6 @@ class OfflineFirstUserRepositoryWriteTest {
             h.repository.syncPending()
             assertThat(h.apiClient.requests.size).isEqualTo(requestsBefore)
         }
-
-    @Test
-    fun deleteNeverFinalisedIsNotSentAndRefreshMayShowUserAgain() =
-        runTest {
-            val h = RepositoryHarness(backgroundScope)
-            h.seedUser(userEntity(42))
-            h.repository.removeUserLocally(42)
-
-            // App terminates: a fresh instance over the same tables has no Undo-window state.
-            val restarted = h.newRepository()
-            h.apiClient.fetchLastPageResults += Result.Success(listOf(remoteUser(42)))
-            val result = restarted.refresh()
-
-            assertThat(result).isEqualTo(Result.Success(Unit))
-            assertThat(h.apiClient.requests.filterIsInstance<RemoteRequest.Delete>()).isEmpty()
-            assertThat(h.userDao.getById(42)).isNotNull()
-        }
-
-    // endregion
-
-    // region restart
 
     @Test
     fun queuedEntrySurvivesRestart() =

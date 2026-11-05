@@ -88,9 +88,8 @@ class OfflineFirstUserRepositoryPolicyParityTest {
                 }
                 PendingOperation.DELETE -> {
                     val user = h.seedUser(userEntity(42)).toUser()
-                    h.repository.removeUserLocally(42)
                     h.apiClient.deleteResults += Result.Failure(error)
-                    h.repository.finalizeDelete(user)
+                    h.repository.deleteUser(user)
                 }
             }
         return when {

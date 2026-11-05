@@ -124,6 +124,7 @@ fun UsersListDetailRoot(
                 },
                 // The detail pane only shows existing users; creating one is the add-user destination.
                 onCreated = {},
+                onDeleteConfirmed = { id -> usersViewModel.onAction(UsersAction.OnConfirmDelete(id)) },
             )
         },
         emptyDetail = { SelectUserPlaceholder() },

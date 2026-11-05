@@ -59,7 +59,8 @@ private val FormMaxWidth = 560.dp
 /**
  * The profile's ViewModel-wired entry point. [profileKey] is a user id (the detail pane) or [ProfileKey.CREATE] (the
  * add-user screen); the caller owns navigation: [onClose] leaves the profile (with a message for the feed),
- * [onCreated] leaves the add-user screen with how the new user was saved.
+ * [onCreated] leaves the add-user screen with how the new user was saved, and [onDeleteConfirmed] hands a confirmed
+ * delete to the feed, which owns the Undo window.
  */
 @Composable
 fun ProfileRoot(
@@ -68,6 +69,7 @@ fun ProfileRoot(
     showBackButton: Boolean,
     onClose: (UiText?) -> Unit,
     onCreated: (WriteStatus) -> Unit,
+    onDeleteConfirmed: (Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -80,6 +82,7 @@ fun ProfileRoot(
         when (event) {
             is ProfileEvent.Close -> onClose(event.message)
             is ProfileEvent.Created -> onCreated(event.status)
+            is ProfileEvent.DeleteConfirmed -> onDeleteConfirmed(event.userId)
             is ProfileEvent.ShowMessage -> scope.launch { snackbarHostState.showSnackbar(event.message.resolve()) }
         }
     }
