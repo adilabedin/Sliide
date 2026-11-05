@@ -150,7 +150,7 @@ class UsersScreenTest {
         composeRule.onNodeWithText("Jane Doe deleted").assertIsDisplayed()
         composeRule.onNodeWithText("Undo").performClick()
 
-        composeRule.runOnIdle { assertEquals(UsersAction.OnUndoDelete(jane.id), actions.last()) }
+        composeRule.runOnIdle { assertEquals(UsersAction.OnUndoDelete, actions.last()) }
     }
 
     @Test

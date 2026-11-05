@@ -4,6 +4,7 @@ import androidx.lifecycle.SavedStateHandle
 import app.cash.turbine.test
 import assertk.assertThat
 import assertk.assertions.containsExactly
+import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
 import assertk.assertions.isNull
@@ -15,7 +16,6 @@ import com.androidlearning.sliide.users.domain.model.Gender
 import com.androidlearning.sliide.users.domain.model.UserDetails
 import com.androidlearning.sliide.users.domain.model.UserStatus
 import com.androidlearning.sliide.users.domain.model.WriteStatus
-import com.androidlearning.sliide.users.presentation.delete.DeleteUndoController
 import com.androidlearning.sliide.users.presentation.fake.FakeUserRepository
 import com.androidlearning.sliide.users.presentation.fake.SchedulerClock
 import com.androidlearning.sliide.users.presentation.fake.jane
@@ -62,9 +62,7 @@ class ProfileViewModelTest {
 
     private suspend fun TestScope.viewModel(handle: SavedStateHandle = savedStateHandle): ProfileViewModel {
         repository.emit(listOf(jane, rahul, pendingAmelie))
-        val clock = SchedulerClock(testScheduler)
-        val controller = DeleteUndoController(repository = repository, scope = backgroundScope, clock = clock)
-        return ProfileViewModel(repository, controller, clock, handle)
+        return ProfileViewModel(repository, SchedulerClock(testScheduler), handle)
     }
 
     private suspend fun TestScope.editingJane(): ProfileViewModel =
@@ -409,7 +407,7 @@ class ProfileViewModelTest {
         }
 
     @Test
-    fun deleteAsksForConfirmationThenClosesAndOpensTheUndoWindow() =
+    fun deleteAsksForConfirmationThenHandsTheDeleteToTheFeedAndCloses() =
         runTest {
             val viewModel = viewModel()
             viewModel.onAction(ProfileAction.OnOpen(jane.id))
@@ -420,8 +418,10 @@ class ProfileViewModelTest {
                 viewModel.onAction(ProfileAction.OnDeleteConfirm)
                 runCurrent()
 
+                assertThat(awaitItem()).isEqualTo(ProfileEvent.DeleteConfirmed(jane.id))
                 assertThat(awaitItem()).isEqualTo(ProfileEvent.Close(message = null))
-                assertThat(repository.removedIds).containsExactly(jane.id)
+                // The feed owns the Undo window: the profile never deletes anything itself.
+                assertThat(repository.deletedUsers).isEmpty()
                 expectNoEvents()
             }
         }
@@ -436,7 +436,7 @@ class ProfileViewModelTest {
             viewModel.onAction(ProfileAction.OnDeleteCancel)
 
             assertThat(viewModel.state.value.showDeleteDialog).isFalse()
-            assertThat(repository.removedIds).containsExactly()
+            assertThat(repository.deletedUsers).isEmpty()
         }
 
     @Test

@@ -1,18 +1,23 @@
 package com.androidlearning.sliide.users.presentation.users
 
 import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import app.cash.turbine.Event
 import app.cash.turbine.test
 import assertk.assertThat
 import assertk.assertions.containsExactly
+import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
 import assertk.assertions.isNull
 import assertk.assertions.isTrue
+import com.androidlearning.sliide.core.domain.util.ApplicationScope
 import com.androidlearning.sliide.core.domain.util.DataError
 import com.androidlearning.sliide.core.domain.util.Result
 import com.androidlearning.sliide.users.domain.model.WriteStatus
-import com.androidlearning.sliide.users.presentation.delete.DeleteUndoController
 import com.androidlearning.sliide.users.presentation.fake.FakeUserRepository
 import com.androidlearning.sliide.users.presentation.fake.SchedulerClock
 import com.androidlearning.sliide.users.presentation.fake.TEST_NOW
@@ -27,6 +32,7 @@ import com.androidlearning.sliide.users.presentation.generated.resources.write_q
 import com.androidlearning.sliide.users.presentation.util.RelativeTime
 import com.androidlearning.sliide.users.presentation.util.UiText
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
@@ -57,23 +63,28 @@ class UsersViewModelTest {
         Dispatchers.resetMain()
     }
 
-    private fun TestScope.viewModel(savedStateHandle: SavedStateHandle = SavedStateHandle()): Pair<UsersViewModel, DeleteUndoController> {
-        val clock = SchedulerClock(testScheduler)
-        val controller = DeleteUndoController(repository = repository, scope = backgroundScope, clock = clock)
-        val viewModel =
-            UsersViewModel(
-                userRepository = repository,
-                deleteUndoController = controller,
-                clock = clock,
-                savedStateHandle = savedStateHandle,
-            )
-        return viewModel to controller
+    /** Unconfined like Main, so deletes sent in it run at once; tied to the test so nothing outlives it. */
+    private fun TestScope.applicationScope() =
+        ApplicationScope(CoroutineScope(backgroundScope.coroutineContext + UnconfinedTestDispatcher(testScheduler)))
+
+    private fun TestScope.viewModel(savedStateHandle: SavedStateHandle = SavedStateHandle()): UsersViewModel =
+        UsersViewModel(
+            userRepository = repository,
+            applicationScope = applicationScope(),
+            clock = SchedulerClock(testScheduler),
+            savedStateHandle = savedStateHandle,
+        )
+
+    /** Long-press → confirm on [userId]'s card. */
+    private fun UsersViewModel.confirmDelete(userId: Long) {
+        onAction(UsersAction.OnDeleteRequest(userId))
+        onAction(UsersAction.OnDeleteConfirm)
     }
 
     @Test
     fun startsLoadingAndRefreshesOnce() =
         runTest {
-            val (viewModel) = viewModel()
+            val viewModel = viewModel()
             viewModel.state.test {
                 assertThat(awaitItem().content).isEqualTo(FeedContent.Loading)
                 cancelAndIgnoreRemainingEvents()
@@ -86,7 +97,7 @@ class UsersViewModelTest {
     @Test
     fun cachedUsersBecomeCards() =
         runTest {
-            val (viewModel) = viewModel()
+            val viewModel = viewModel()
             viewModel.state.test {
                 repository.emit(listOf(jane, rahul))
 
@@ -103,7 +114,7 @@ class UsersViewModelTest {
     fun emptyCacheStaysLoadingWhileTheFirstRefreshRuns() =
         runTest {
             repository.refreshGate = CompletableDeferred()
-            val (viewModel) = viewModel()
+            val viewModel = viewModel()
             viewModel.state.test {
                 repository.emit(emptyList())
                 assertThat(expectMostRecentItem().content).isEqualTo(FeedContent.Loading)
@@ -116,7 +127,7 @@ class UsersViewModelTest {
     @Test
     fun retryFromTheEmptyStateShowsTheShimmerThenTheUsers() =
         runTest {
-            val (viewModel) = viewModel()
+            val viewModel = viewModel()
             viewModel.state.test {
                 repository.emit(emptyList())
                 assertThat(expectMostRecentItem().content).isEqualTo(FeedContent.Empty)
@@ -139,7 +150,7 @@ class UsersViewModelTest {
     @Test
     fun retryFromTheEmptyStateReturnsToEmptyWhenStillNoUsers() =
         runTest {
-            val (viewModel) = viewModel()
+            val viewModel = viewModel()
             viewModel.state.test {
                 repository.emit(emptyList())
                 assertThat(expectMostRecentItem().content).isEqualTo(FeedContent.Empty)
@@ -157,7 +168,7 @@ class UsersViewModelTest {
     fun emptyCacheWithFailedRefreshShowsFullScreenError() =
         runTest {
             repository.refreshResult = Result.Failure(DataError.Remote.NO_INTERNET)
-            val (viewModel) = viewModel()
+            val viewModel = viewModel()
             viewModel.state.test {
                 repository.emit(emptyList())
 
@@ -169,7 +180,7 @@ class UsersViewModelTest {
     fun retryReplacesTheErrorWithUsers() =
         runTest {
             repository.refreshResult = Result.Failure(DataError.Remote.NO_INTERNET)
-            val (viewModel) = viewModel()
+            val viewModel = viewModel()
             viewModel.state.test {
                 repository.emit(emptyList())
                 repository.refreshResult = Result.Success(Unit)
@@ -187,7 +198,7 @@ class UsersViewModelTest {
     fun failedRefreshWithCacheShowsBannerUntilASuccessfulRefresh() =
         runTest {
             repository.refreshResult = Result.Failure(DataError.Remote.NO_INTERNET)
-            val (viewModel) = viewModel()
+            val viewModel = viewModel()
             viewModel.state.test {
                 repository.emit(listOf(jane))
                 val failed = expectMostRecentItem()
@@ -205,7 +216,7 @@ class UsersViewModelTest {
     fun dismissedBannerStaysHidden() =
         runTest {
             repository.refreshResult = Result.Failure(DataError.Remote.NO_INTERNET)
-            val (viewModel) = viewModel()
+            val viewModel = viewModel()
             viewModel.state.test {
                 repository.emit(listOf(jane))
                 viewModel.onAction(UsersAction.OnDismissBanner)
@@ -218,7 +229,7 @@ class UsersViewModelTest {
     fun pullDuringTheLaunchRefreshShowsTheIndicatorWithoutASecondRefresh() =
         runTest {
             repository.refreshGate = CompletableDeferred()
-            val (viewModel) = viewModel()
+            val viewModel = viewModel()
             viewModel.state.test {
                 repository.emit(listOf(jane))
                 assertThat(expectMostRecentItem().isRefreshing).isFalse()
@@ -237,7 +248,7 @@ class UsersViewModelTest {
     fun launchRefreshWithCachedUsersShowsNoIndicator() =
         runTest {
             repository.refreshGate = CompletableDeferred()
-            val (viewModel) = viewModel()
+            val viewModel = viewModel()
             viewModel.state.test {
                 repository.emit(listOf(jane, rahul))
 
@@ -256,7 +267,7 @@ class UsersViewModelTest {
     fun usersArrivingDuringTheFirstLaunchRefreshShowNoIndicator() =
         runTest {
             repository.refreshGate = CompletableDeferred()
-            val (viewModel) = viewModel()
+            val viewModel = viewModel()
             viewModel.state.test {
                 repository.emit(emptyList())
                 assertThat(expectMostRecentItem().content).isEqualTo(FeedContent.Loading)
@@ -272,7 +283,7 @@ class UsersViewModelTest {
     @Test
     fun pullWhenIdleShowsTheIndicatorUntilTheRefreshEnds() =
         runTest {
-            val (viewModel) = viewModel()
+            val viewModel = viewModel()
             viewModel.state.test {
                 repository.emit(listOf(jane))
                 assertThat(expectMostRecentItem().isRefreshing).isFalse()
@@ -290,7 +301,7 @@ class UsersViewModelTest {
     @Test
     fun relativeTimeUpdatesAsTimePasses() =
         runTest {
-            val (viewModel) = viewModel()
+            val viewModel = viewModel()
             viewModel.state.test {
                 repository.emit(listOf(jane))
                 assertThat(expectMostRecentItem().users.single().addedAgo).isEqualTo(RelativeTime.Minutes(5))
@@ -305,7 +316,7 @@ class UsersViewModelTest {
     @Test
     fun localOnlyUserIsMarkedPendingSync() =
         runTest {
-            val (viewModel) = viewModel()
+            val viewModel = viewModel()
             viewModel.state.test {
                 repository.emit(listOf(pendingAmelie, jane))
 
@@ -317,9 +328,9 @@ class UsersViewModelTest {
         }
 
     @Test
-    fun confirmingADeleteOpensTheUndoWindow() =
+    fun confirmingADeleteHidesTheUserWithoutTouchingTheRepository() =
         runTest {
-            val (viewModel) = viewModel()
+            val viewModel = viewModel()
             viewModel.state.test {
                 repository.emit(listOf(jane, rahul))
 
@@ -335,75 +346,224 @@ class UsersViewModelTest {
                 assertThat(state.pendingDelete).isEqualTo(
                     PendingDeleteUi(jane.id, "Jane Doe", TEST_NOW + 5.seconds, windowMillis = 5_000),
                 )
+                assertThat(repository.deletedUsers).isEmpty()
             }
         }
 
     @Test
     fun cancellingTheDialogChangesNothing() =
         runTest {
-            val (viewModel) = viewModel()
+            val viewModel = viewModel()
             viewModel.state.test {
                 repository.emit(listOf(jane))
 
                 viewModel.onAction(UsersAction.OnDeleteRequest(jane.id))
                 viewModel.onAction(UsersAction.OnDeleteCancel)
-                runCurrent()
+                advanceTimeBy(10.seconds)
 
                 val state = expectMostRecentItem()
                 assertThat(state.confirmDelete).isNull()
+                assertThat(state.pendingDelete).isNull()
                 assertThat(state.users.map { it.id }).containsExactly(jane.id)
-                assertThat(repository.removedIds).containsExactly()
+                assertThat(repository.deletedUsers).isEmpty()
             }
         }
 
     @Test
-    fun undoRestoresTheUser() =
+    fun undoWithinTheWindowShowsTheUserAgainAndNeverDeletes() =
         runTest {
-            val (viewModel) = viewModel()
+            val viewModel = viewModel()
             viewModel.state.test {
-                repository.emit(listOf(jane))
-                viewModel.onAction(UsersAction.OnDeleteRequest(jane.id))
-                viewModel.onAction(UsersAction.OnDeleteConfirm)
-                runCurrent()
+                repository.emit(listOf(jane, rahul))
+                viewModel.confirmDelete(jane.id)
+                advanceTimeBy(2.seconds)
 
-                viewModel.onAction(UsersAction.OnUndoDelete(jane.id))
-                runCurrent()
+                viewModel.onAction(UsersAction.OnUndoDelete)
+                advanceTimeBy(10.seconds)
 
                 val state = expectMostRecentItem()
                 assertThat(state.pendingDelete).isNull()
-                assertThat(state.users.map { it.id }).containsExactly(jane.id)
-                assertThat(repository.finalizedUsers).containsExactly()
+                assertThat(state.users.map { it.id }).containsExactly(jane.id, rahul.id)
+                assertThat(repository.deletedUsers).isEmpty()
             }
         }
 
     @Test
-    fun swipingTheSnackbarCommitsTheDelete() =
+    fun theWindowEndingDeletesTheUserOnce() =
         runTest {
-            val (viewModel) = viewModel()
+            val viewModel = viewModel()
+            viewModel.state.test {
+                repository.emit(listOf(jane, rahul))
+                viewModel.confirmDelete(jane.id)
+
+                advanceTimeBy(4.9.seconds)
+                assertThat(repository.deletedUsers).isEmpty()
+
+                advanceTimeBy(10.seconds)
+                val state = expectMostRecentItem()
+                assertThat(repository.deletedUsers).containsExactly(jane)
+                assertThat(state.pendingDelete).isNull()
+                assertThat(state.users.map { it.id }).containsExactly(rahul.id)
+            }
+        }
+
+    @Test
+    fun theUserStaysHiddenWhileItsDeleteRuns() =
+        runTest {
+            repository.deleteGate = CompletableDeferred()
+            val viewModel = viewModel()
+            viewModel.state.test {
+                repository.emit(listOf(jane, rahul))
+                viewModel.confirmDelete(jane.id)
+                viewModel.onAction(UsersAction.OnCommitDelete)
+                runCurrent()
+
+                // The window is closed but the cache still has Jane: the card must not flash back meanwhile.
+                val state = expectMostRecentItem()
+                assertThat(state.pendingDelete).isNull()
+                assertThat(state.users.map { it.id }).containsExactly(rahul.id)
+
+                repository.deleteGate!!.complete(Unit)
+                runCurrent()
+                // Now gone from the cache instead; the state is unchanged, so nothing new is emitted.
+                assertThat(
+                    viewModel.state.value.users
+                        .map { it.id },
+                ).containsExactly(rahul.id)
+                assertThat(repository.deletedUsers).containsExactly(jane)
+            }
+        }
+
+    @Test
+    fun swipingTheSnackbarDeletesAtOnce() =
+        runTest {
+            val viewModel = viewModel()
             viewModel.state.test {
                 repository.emit(listOf(jane))
-                viewModel.onAction(UsersAction.OnDeleteRequest(jane.id))
-                viewModel.onAction(UsersAction.OnDeleteConfirm)
-                runCurrent()
+                viewModel.confirmDelete(jane.id)
+                advanceTimeBy(1.seconds)
 
-                viewModel.onAction(UsersAction.OnCommitDelete(jane.id))
+                viewModel.onAction(UsersAction.OnCommitDelete)
                 runCurrent()
-
-                assertThat(repository.finalizedUsers).containsExactly(jane)
+                assertThat(repository.deletedUsers).containsExactly(jane)
                 assertThat(expectMostRecentItem().pendingDelete).isNull()
+
+                advanceTimeBy(10.seconds)
+                assertThat(repository.deletedUsers).containsExactly(jane)
             }
         }
 
     @Test
-    fun refusedFinaliseSaysTheServerRefused() =
+    fun aSecondDeleteFinalisesTheFirstAtOnce() =
         runTest {
-            repository.finalizeResult = Result.Failure(DataError.Validation(emptyList()))
-            val (viewModel) = viewModel()
+            val viewModel = viewModel()
+            viewModel.state.test {
+                repository.emit(listOf(jane, rahul))
+                viewModel.confirmDelete(jane.id)
+                advanceTimeBy(2.seconds)
+
+                viewModel.confirmDelete(rahul.id)
+                runCurrent()
+
+                assertThat(repository.deletedUsers).containsExactly(jane)
+                assertThat(expectMostRecentItem().pendingDelete).isEqualTo(
+                    PendingDeleteUi(rahul.id, "Rahul Sharma", TEST_NOW + 7.seconds, windowMillis = 5_000),
+                )
+                advanceTimeBy(4.seconds)
+                assertThat(repository.deletedUsers).containsExactly(jane)
+                advanceTimeBy(2.seconds)
+                assertThat(repository.deletedUsers).containsExactly(jane, rahul)
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
+
+    @Test
+    fun aRefreshDuringTheWindowKeepsTheUserHiddenAndUndoable() =
+        runTest {
+            val viewModel = viewModel()
+            viewModel.state.test {
+                repository.emit(listOf(jane, rahul))
+                viewModel.confirmDelete(jane.id)
+
+                viewModel.onAction(UsersAction.OnRefresh)
+                repository.emit(listOf(jane, rahul))
+                runCurrent()
+                assertThat(expectMostRecentItem().users.map { it.id }).containsExactly(rahul.id)
+
+                viewModel.onAction(UsersAction.OnUndoDelete)
+                runCurrent()
+                assertThat(expectMostRecentItem().users.map { it.id }).containsExactly(jane.id, rahul.id)
+            }
+        }
+
+    @Test
+    fun clearingTheViewModelSendsADeleteStillWaitingOnUndo() =
+        runTest {
+            // Spec user-deletion: "App closed during the window".
+            val store = ViewModelStore()
+            val viewModel =
+                ViewModelProvider.create(store, viewModelFactory { initializer { viewModel() } })[UsersViewModel::class]
+            viewModel.state.test {
+                repository.emit(listOf(jane, rahul))
+                viewModel.confirmDelete(jane.id)
+                runCurrent()
+                assertThat(repository.deletedUsers).isEmpty()
+                cancelAndIgnoreRemainingEvents()
+            }
+
+            store.clear()
+            runCurrent()
+
+            assertThat(repository.deletedUsers).containsExactly(jane)
+        }
+
+    @Test
+    fun theProfileHandsOverADelete() =
+        runTest {
+            val viewModel = viewModel()
+            viewModel.state.test {
+                repository.emit(listOf(jane, rahul))
+
+                viewModel.onAction(UsersAction.OnConfirmDelete(jane.id))
+                runCurrent()
+
+                val state = expectMostRecentItem()
+                assertThat(state.users.map { it.id }).containsExactly(rahul.id)
+                assertThat(state.pendingDelete?.userId).isEqualTo(jane.id)
+                assertThat(repository.deletedUsers).isEmpty()
+            }
+        }
+
+    @Test
+    fun deletingTheChosenUserClearsTheSelection() =
+        runTest {
+            val savedStateHandle = SavedStateHandle()
+            val viewModel = viewModel(savedStateHandle)
+            viewModel.state.test {
+                viewModel.onAction(UsersAction.OnPaneLayoutChange(isTwoPane = true))
+                repository.emit(listOf(jane, rahul))
+                viewModel.onAction(UsersAction.OnSelectionChange(jane.id))
+                assertThat(expectMostRecentItem().selectedUserId).isEqualTo(jane.id)
+
+                viewModel.confirmDelete(jane.id)
+                runCurrent()
+
+                val state = expectMostRecentItem()
+                assertThat(state.selectedUserId).isEqualTo(rahul.id)
+                assertThat(state.defaultSelectedUserId).isEqualTo(rahul.id)
+                assertThat(savedStateHandle.get<Long>("users_chosen_user")).isNull()
+            }
+        }
+
+    @Test
+    fun refusedDeleteSaysTheServerRefused() =
+        runTest {
+            repository.deleteResult = Result.Failure(DataError.Validation(emptyList()))
+            val viewModel = viewModel()
             viewModel.state.test {
                 repository.emit(listOf(jane))
                 viewModel.events.test {
-                    viewModel.onAction(UsersAction.OnDeleteRequest(jane.id))
-                    viewModel.onAction(UsersAction.OnDeleteConfirm)
+                    viewModel.confirmDelete(jane.id)
                     advanceTimeBy(6.seconds)
 
                     assertThat(awaitItem()).isEqualTo(
@@ -415,15 +575,14 @@ class UsersViewModelTest {
         }
 
     @Test
-    fun finaliseWithUnexpectedStatusSaysTheUserCouldNotBeDeleted() =
+    fun deleteWithUnexpectedStatusSaysTheUserCouldNotBeDeleted() =
         runTest {
-            repository.finalizeResult = Result.Failure(DataError.Remote.UNKNOWN)
-            val (viewModel) = viewModel()
+            repository.deleteResult = Result.Failure(DataError.Remote.UNKNOWN)
+            val viewModel = viewModel()
             viewModel.state.test {
                 repository.emit(listOf(jane))
                 viewModel.events.test {
-                    viewModel.onAction(UsersAction.OnDeleteRequest(jane.id))
-                    viewModel.onAction(UsersAction.OnDeleteConfirm)
+                    viewModel.confirmDelete(jane.id)
                     advanceTimeBy(6.seconds)
 
                     assertThat(awaitItem()).isEqualTo(
@@ -435,15 +594,14 @@ class UsersViewModelTest {
         }
 
     @Test
-    fun unauthorisedFinaliseSaysItWillRetry() =
+    fun unauthorisedDeleteSaysItWillRetry() =
         runTest {
-            repository.finalizeResult = Result.Success(WriteStatus.QUEUED_AUTH_FAILED)
-            val (viewModel) = viewModel()
+            repository.deleteResult = Result.Success(WriteStatus.QUEUED_AUTH_FAILED)
+            val viewModel = viewModel()
             viewModel.state.test {
                 repository.emit(listOf(jane))
                 viewModel.events.test {
-                    viewModel.onAction(UsersAction.OnDeleteRequest(jane.id))
-                    viewModel.onAction(UsersAction.OnDeleteConfirm)
+                    viewModel.confirmDelete(jane.id)
                     advanceTimeBy(6.seconds)
 
                     assertThat(awaitItem()).isEqualTo(
@@ -455,9 +613,26 @@ class UsersViewModelTest {
         }
 
     @Test
+    fun queuedOfflineDeleteShowsNoMessage() =
+        runTest {
+            repository.deleteResult = Result.Success(WriteStatus.QUEUED)
+            val viewModel = viewModel()
+            viewModel.state.test {
+                repository.emit(listOf(jane))
+                viewModel.events.test {
+                    viewModel.confirmDelete(jane.id)
+                    advanceTimeBy(6.seconds)
+
+                    expectNoEvents()
+                }
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
+
+    @Test
     fun createdUserScrollsTheFeedToTheTop() =
         runTest {
-            val (viewModel) = viewModel()
+            val viewModel = viewModel()
             viewModel.state.test {
                 repository.emit(listOf(jane))
                 // The create lands in the cache before the add-user screen reports it.
@@ -474,7 +649,7 @@ class UsersViewModelTest {
     @Test
     fun selectionIsReflectedInState() =
         runTest {
-            val (viewModel) = viewModel()
+            val viewModel = viewModel()
             viewModel.state.test {
                 viewModel.onAction(UsersAction.OnSelectionChange(jane.id))
                 assertThat(expectMostRecentItem().selectedUserId).isEqualTo(jane.id)
@@ -484,7 +659,7 @@ class UsersViewModelTest {
     @Test
     fun twoPaneWithNothingChosenSelectsTheFirstUser() =
         runTest {
-            val (viewModel) = viewModel()
+            val viewModel = viewModel()
             viewModel.state.test {
                 viewModel.onAction(UsersAction.OnPaneLayoutChange(isTwoPane = true))
                 repository.emit(listOf(jane, rahul))
@@ -498,7 +673,7 @@ class UsersViewModelTest {
     @Test
     fun singlePaneHasNoDefaultSelection() =
         runTest {
-            val (viewModel) = viewModel()
+            val viewModel = viewModel()
             viewModel.state.test {
                 viewModel.onAction(UsersAction.OnPaneLayoutChange(isTwoPane = false))
                 repository.emit(listOf(jane, rahul))
@@ -512,7 +687,7 @@ class UsersViewModelTest {
     @Test
     fun chosenUserOverridesTheDefault() =
         runTest {
-            val (viewModel) = viewModel()
+            val viewModel = viewModel()
             viewModel.state.test {
                 viewModel.onAction(UsersAction.OnPaneLayoutChange(isTwoPane = true))
                 repository.emit(listOf(jane, rahul))
@@ -528,7 +703,7 @@ class UsersViewModelTest {
     @Test
     fun closingTheChosenProfileFallsBackToTheDefault() =
         runTest {
-            val (viewModel) = viewModel()
+            val viewModel = viewModel()
             viewModel.state.test {
                 viewModel.onAction(UsersAction.OnPaneLayoutChange(isTwoPane = true))
                 repository.emit(listOf(jane, rahul))
@@ -545,7 +720,7 @@ class UsersViewModelTest {
     @Test
     fun aChosenUserThatDisappearsStaysChosenUntilTheProfileClosesIt() =
         runTest {
-            val (viewModel) = viewModel()
+            val viewModel = viewModel()
             viewModel.state.test {
                 viewModel.onAction(UsersAction.OnPaneLayoutChange(isTwoPane = true))
                 repository.emit(listOf(jane, rahul))
@@ -564,7 +739,7 @@ class UsersViewModelTest {
     @Test
     fun aFeedThatStoppedCollectingComesBackWithItsUsersAndDefault() =
         runTest {
-            val (viewModel) = viewModel()
+            val viewModel = viewModel()
             viewModel.state.test {
                 viewModel.onAction(UsersAction.OnPaneLayoutChange(isTwoPane = true))
                 repository.emit(listOf(jane, rahul))
@@ -591,10 +766,10 @@ class UsersViewModelTest {
     fun theChosenUserSurvivesProcessDeath() =
         runTest {
             val savedStateHandle = SavedStateHandle()
-            val (before) = viewModel(savedStateHandle)
+            val before = viewModel(savedStateHandle)
             before.onAction(UsersAction.OnSelectionChange(rahul.id))
 
-            val (restored) = viewModel(savedStateHandle)
+            val restored = viewModel(savedStateHandle)
 
             assertThat(restored.state.value.selectedUserId).isEqualTo(rahul.id)
             restored.state.test {
@@ -606,14 +781,13 @@ class UsersViewModelTest {
     @Test
     fun defaultFollowsTheFirstCardWhenTheFirstUserIsDeleted() =
         runTest {
-            val (viewModel) = viewModel()
+            val viewModel = viewModel()
             viewModel.state.test {
                 viewModel.onAction(UsersAction.OnPaneLayoutChange(isTwoPane = true))
                 repository.emit(listOf(jane, rahul))
                 assertThat(expectMostRecentItem().defaultSelectedUserId).isEqualTo(jane.id)
 
-                viewModel.onAction(UsersAction.OnDeleteRequest(jane.id))
-                viewModel.onAction(UsersAction.OnDeleteConfirm)
+                viewModel.confirmDelete(jane.id)
                 runCurrent()
 
                 val state = expectMostRecentItem()
@@ -625,7 +799,7 @@ class UsersViewModelTest {
     @Test
     fun defaultFollowsTheFirstCardWhenAUserIsCreatedAtTheTop() =
         runTest {
-            val (viewModel) = viewModel()
+            val viewModel = viewModel()
             viewModel.state.test {
                 viewModel.onAction(UsersAction.OnPaneLayoutChange(isTwoPane = true))
                 repository.emit(listOf(jane, rahul))
@@ -642,7 +816,7 @@ class UsersViewModelTest {
     fun loadingHasNoDefaultSelection() =
         runTest {
             repository.refreshGate = CompletableDeferred()
-            val (viewModel) = viewModel()
+            val viewModel = viewModel()
             viewModel.state.test {
                 viewModel.onAction(UsersAction.OnPaneLayoutChange(isTwoPane = true))
 
@@ -656,7 +830,7 @@ class UsersViewModelTest {
     @Test
     fun emptyFeedHasNoDefaultSelection() =
         runTest {
-            val (viewModel) = viewModel()
+            val viewModel = viewModel()
             viewModel.state.test {
                 viewModel.onAction(UsersAction.OnPaneLayoutChange(isTwoPane = true))
                 repository.emit(emptyList())
@@ -672,7 +846,7 @@ class UsersViewModelTest {
     fun fullScreenErrorHasNoDefaultSelection() =
         runTest {
             repository.refreshResult = Result.Failure(DataError.Remote.NO_INTERNET)
-            val (viewModel) = viewModel()
+            val viewModel = viewModel()
             viewModel.state.test {
                 viewModel.onAction(UsersAction.OnPaneLayoutChange(isTwoPane = true))
                 repository.emit(emptyList())

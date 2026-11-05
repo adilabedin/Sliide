@@ -68,15 +68,14 @@ class OfflineFirstUserRepositoryLifetimeTest {
         }
 
     @Test
-    fun cancelledFinalizeDeleteCallerStillDeletesAndClearsTheEntry() =
+    fun cancelledDeleteCallerStillDeletesAndClearsTheEntry() =
         runTest {
             val h = RepositoryHarness(backgroundScope)
             val user = h.seedUser(userEntity(42)).toUser()
-            h.repository.removeUserLocally(42)
             val gate = CompletableDeferred<Unit>()
             h.apiClient.gate = gate
 
-            val caller = launch { h.repository.finalizeDelete(user) }
+            val caller = launch { h.repository.deleteUser(user) }
             runCurrent()
             caller.cancel()
             gate.complete(Unit)
@@ -103,26 +102,6 @@ class OfflineFirstUserRepositoryLifetimeTest {
             runCurrent()
 
             assertThat(h.userDao.getAll().map { it.id }).containsExactly(2L)
-        }
-
-    @Test
-    fun cancelledRemoveAndRestoreCallersStillApply() =
-        runTest {
-            val h = RepositoryHarness(backgroundScope)
-            val user = h.seedUser(userEntity(42)).toUser()
-
-            val remove = launch { h.repository.removeUserLocally(42) }
-            remove.cancel()
-            runCurrent()
-            // Cancelled before it was dispatched: the caller never started waiting, so nothing ran.
-            assertThat(h.userDao.getById(42)).isNotNull()
-
-            h.repository.removeUserLocally(42)
-            val restore = launch { h.repository.restoreUser(user) }
-            runCurrent()
-            restore.cancel()
-            runCurrent()
-            assertThat(h.userDao.getById(42)?.toUser()).isEqualTo(user)
         }
 
     @Test

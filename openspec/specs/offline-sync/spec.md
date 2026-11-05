@@ -108,23 +108,22 @@ temporary id with the server's user under the server id, and remove the pending 
 
 ### Requirement: Permanently rejected replays are dropped
 If a replayed entry fails with an error that is not kept for a later sync, the system SHALL delete the entry without
-recording it anywhere and count it as rejected (a DELETE answered 404 counts as synced instead). Sync SHALL NOT change
-the cached users for it: the next refresh replaces the cached list with the server's, which removes a temporary user
-whose create was rejected, brings back a user whose delete was refused, and drops a user that no longer exists. Replay
-SHALL then continue with the next entry.
+recording it anywhere; it does not fail the sync. Sync SHALL NOT change the cached users for it: the next refresh
+replaces the cached list with the server's, which removes a temporary user whose create was rejected, brings back a user
+whose delete was refused, and drops a user that no longer exists. Replay SHALL then continue with the next entry.
 
 #### Scenario: Replayed create rejected
 - **WHEN** a pending CREATE is replayed and the API responds 422 with a field error
-- **THEN** the entry is removed, the sync result counts one rejected write, and the next refresh removes the user with
-  the temporary id from the cache
+- **THEN** the entry is removed, the sync succeeds, and the next refresh removes the user with the temporary id from
+  the cache
 
 #### Scenario: Replayed delete rejected
 - **WHEN** a pending DELETE is replayed and the API responds 422
-- **THEN** the entry is removed and the sync result counts one rejected write
+- **THEN** the entry is removed and the sync succeeds
 
 #### Scenario: Replayed update for a user that no longer exists
 - **WHEN** a pending UPDATE is replayed and the API responds 404
-- **THEN** the entry is removed and the sync result counts one rejected write
+- **THEN** the entry is removed and the sync succeeds
 
 #### Scenario: Replayed update rejected
 - **WHEN** a pending UPDATE is replayed and the API responds 422
@@ -175,17 +174,9 @@ removed and every unprocessed entry queued.
 - **WHEN** two of five entries have replayed successfully and the process is terminated
 - **THEN** the next replay starts with the third entry and never resends the first two
 
-### Requirement: Users inside the Undo window are not replayed
-Replay SHALL skip, but keep queued, any pending entry for a user that has been removed locally and whose delete has
-not yet been finalised or undone.
-
-#### Scenario: Replay during Undo window of an offline-created user
-- **WHEN** a user with a temporary id and a pending CREATE is removed locally, replay runs, and then the delete is finalised
-- **THEN** no CREATE or DELETE request is ever sent for that user and no pending entry remains
-
 ### Requirement: Replay can target a single user
 The system SHALL be able to replay one user's pending entry on its own. A single-user replay SHALL apply exactly the
-same success, rejection and Undo-window rules as a full replay, and SHALL leave every other user's entry untouched.
+same success and rejection rules as a full replay, and SHALL leave every other user's entry untouched.
 
 #### Scenario: Single-user replay succeeds
 - **GIVEN** users 41 and 42 each have a pending UPDATE
@@ -194,18 +185,26 @@ same success, rejection and Undo-window rules as a full replay, and SHALL leave 
 
 #### Scenario: Single-user replay rejected
 - **WHEN** a pending CREATE for temporary id -1 is replayed on its own and the API responds 422
-- **THEN** the entry is removed, the sync result counts one rejected write, and the cache is left for the next refresh,
-  as in a full replay
+- **THEN** the entry is removed, the sync succeeds, and the cache is left for the next refresh, as in a full replay
 
 #### Scenario: Single-user replay keeps a retryable failure
 - **WHEN** a pending UPDATE for user 42 is replayed on its own and the API responds 503
 - **THEN** the entry stays queued with its snapshot and operation unchanged
 
 #### Scenario: Single-user replay inside the Undo window
-- **GIVEN** user 42 has a pending entry and has been removed locally, and the delete is neither finalised nor undone
-- **WHEN** user 42's entry is replayed on its own
-- **THEN** no request is sent and the entry stays queued
+- **GIVEN** user 42 has a pending UPDATE and is hidden by a confirmed delete whose Undo window is still open
+- **WHEN** user 42's entry is replayed on its own and the API responds 200
+- **THEN** the UPDATE is sent and its entry removed, as for any other user
 
 #### Scenario: No pending entry
 - **WHEN** a single-user replay runs for a user with no pending entry
 - **THEN** no request is sent and nothing changes
+
+### Requirement: A delete reaches a user re-keyed meanwhile
+A delete requested under a temporary id whose CREATE has already synced in the same process SHALL delete the user under
+its server id, with the same local-first, queueing and rejection rules as any other delete.
+
+#### Scenario: CREATE syncs during the Undo window
+- **GIVEN** a user created offline under id -1 is hidden by a confirmed delete
+- **WHEN** its CREATE syncs and the API returns id 7012, and then the delete for id -1 runs
+- **THEN** the cache holds neither -1 nor 7012, and a DELETE request targets id 7012

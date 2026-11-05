@@ -13,10 +13,10 @@ import kotlin.test.Test
 /** Spec user-write-errors: "Direct writes and replay decide the same way". */
 class OfflineFirstUserRepositoryPolicyParityTest {
     /**
-     * The decision a failed write reached, independent of the path: KEPT (still queued), DONE (a delete of a user already
-     * gone: direct returns success, sync counts it synced) or REJECTED (direct returns the error, sync counts it rejected).
+     * The decision a failed write reached, as both paths can observe it: KEPT (still queued) or DROPPED (left the queue,
+     * whether rejected or already done). How a direct write reports a drop is covered by the write tests.
      */
-    private enum class Outcome { KEPT, REJECTED, DONE }
+    private enum class Outcome { KEPT, DROPPED }
 
     private val errors: List<DataError> =
         listOf(
@@ -62,7 +62,7 @@ class OfflineFirstUserRepositoryPolicyParityTest {
         runTest {
             listOf(
                 DataError.Remote.SERVER_ERROR to Outcome.KEPT,
-                emailTaken to Outcome.REJECTED,
+                emailTaken to Outcome.DROPPED,
             ).forEach { (error, expected) ->
                 assertThat(direct(backgroundScope, PendingOperation.CREATE, error), "direct $error").isEqualTo(expected)
                 assertThat(replayed(backgroundScope, PendingOperation.CREATE, error), "replay $error").isEqualTo(expected)
@@ -75,29 +75,23 @@ class OfflineFirstUserRepositoryPolicyParityTest {
         error: DataError,
     ): Outcome {
         val h = RepositoryHarness(scope)
-        val result =
-            when (operation) {
-                PendingOperation.CREATE -> {
-                    h.apiClient.createResults += Result.Failure(error)
-                    h.repository.createUser(details())
-                }
-                PendingOperation.UPDATE -> {
-                    val user = h.seedUser(userEntity(42)).toUser()
-                    h.apiClient.updateResults += Result.Failure(error)
-                    h.repository.updateUser(user.copy(name = "Edited"))
-                }
-                PendingOperation.DELETE -> {
-                    val user = h.seedUser(userEntity(42)).toUser()
-                    h.repository.removeUserLocally(42)
-                    h.apiClient.deleteResults += Result.Failure(error)
-                    h.repository.finalizeDelete(user)
-                }
+        when (operation) {
+            PendingOperation.CREATE -> {
+                h.apiClient.createResults += Result.Failure(error)
+                h.repository.createUser(details())
             }
-        return when {
-            h.pendingSyncDao.entries.isNotEmpty() -> Outcome.KEPT
-            result is Result.Success -> Outcome.DONE
-            else -> Outcome.REJECTED
+            PendingOperation.UPDATE -> {
+                val user = h.seedUser(userEntity(42)).toUser()
+                h.apiClient.updateResults += Result.Failure(error)
+                h.repository.updateUser(user.copy(name = "Edited"))
+            }
+            PendingOperation.DELETE -> {
+                val user = h.seedUser(userEntity(42)).toUser()
+                h.apiClient.deleteResults += Result.Failure(error)
+                h.repository.deleteUser(user)
+            }
         }
+        return if (h.pendingSyncDao.entries.isNotEmpty()) Outcome.KEPT else Outcome.DROPPED
     }
 
     private suspend fun replayed(
@@ -115,11 +109,7 @@ class OfflineFirstUserRepositoryPolicyParityTest {
             PendingOperation.UPDATE -> h.apiClient.updateResults += Result.Failure(error)
             PendingOperation.DELETE -> h.apiClient.deleteResults += Result.Failure(error)
         }
-        val report = (h.repository.syncPending() as? Result.Success)?.data
-        return when {
-            h.pendingSyncDao.entries.isNotEmpty() -> Outcome.KEPT
-            report?.synced == 1 -> Outcome.DONE
-            else -> Outcome.REJECTED
-        }
+        h.repository.syncPending()
+        return if (h.pendingSyncDao.entries.isNotEmpty()) Outcome.KEPT else Outcome.DROPPED
     }
 }

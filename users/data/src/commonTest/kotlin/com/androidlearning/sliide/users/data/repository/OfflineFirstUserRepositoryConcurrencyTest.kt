@@ -6,7 +6,6 @@ import assertk.assertions.isEqualTo
 import com.androidlearning.sliide.core.database.PendingOperation
 import com.androidlearning.sliide.core.domain.util.Result
 import com.androidlearning.sliide.users.data.fake.RemoteRequest
-import com.androidlearning.sliide.users.domain.model.SyncReport
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -34,7 +33,7 @@ class OfflineFirstUserRepositoryConcurrencyTest {
             runCurrent()
             gate.complete(Unit)
 
-            val expected = Result.Success(SyncReport(synced = 2, rejected = 0))
+            val expected = Result.Success(Unit)
             assertThat(first.await()).isEqualTo(expected)
             assertThat(second.await()).isEqualTo(expected)
             assertThat(h.apiClient.requests.map { (it as RemoteRequest.Update).id }).containsExactly(1L, 2L)
@@ -78,7 +77,7 @@ class OfflineFirstUserRepositoryConcurrencyTest {
             cancelled.cancel()
             gate.complete(Unit)
 
-            assertThat(survivor.await()).isEqualTo(Result.Success(SyncReport(synced = 1, rejected = 0)))
+            assertThat(survivor.await()).isEqualTo(Result.Success(Unit))
         }
 
     @Test

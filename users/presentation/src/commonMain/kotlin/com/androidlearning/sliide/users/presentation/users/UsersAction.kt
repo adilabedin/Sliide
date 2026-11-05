@@ -18,17 +18,18 @@ sealed interface UsersAction {
 
     data object OnDeleteConfirm : UsersAction
 
+    /** The profile confirmed deleting [userId] and handed the Undo window to the feed (spec: user-deletion). */
+    data class OnConfirmDelete(
+        val userId: Long,
+    ) : UsersAction
+
     data object OnDeleteCancel : UsersAction
 
-    /** Undo pressed on the snackbar of [userId]'s window. */
-    data class OnUndoDelete(
-        val userId: Long,
-    ) : UsersAction
+    /** Undo pressed on the snackbar of the open window. */
+    data object OnUndoDelete : UsersAction
 
-    /** The snackbar of [userId]'s window was swiped away. */
-    data class OnCommitDelete(
-        val userId: Long,
-    ) : UsersAction
+    /** The snackbar of the open window was swiped away: send the delete now. */
+    data object OnCommitDelete : UsersAction
 
     /**
      * The profile the user chose to open, or `null` when they closed it. Drives which profile is shown, the card

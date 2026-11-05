@@ -14,7 +14,6 @@ import com.androidlearning.sliide.users.domain.model.WriteStatus
 import com.androidlearning.sliide.users.domain.validation.EmailError
 import com.androidlearning.sliide.users.domain.validation.NameError
 import com.androidlearning.sliide.users.domain.validation.UserDetailsValidator
-import com.androidlearning.sliide.users.presentation.delete.DeleteUndoController
 import com.androidlearning.sliide.users.presentation.generated.resources.Res
 import com.androidlearning.sliide.users.presentation.generated.resources.profile_no_longer_available
 import com.androidlearning.sliide.users.presentation.generated.resources.validation_email_invalid
@@ -48,7 +47,6 @@ import kotlin.time.Clock
  */
 class ProfileViewModel(
     private val userRepository: UserRepository,
-    private val deleteUndoController: DeleteUndoController,
     private val clock: Clock,
     private val savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
@@ -303,7 +301,8 @@ class ProfileViewModel(
         _state.value = _state.value.copy(showDeleteDialog = false)
         observeJob?.cancel()
         clearTarget()
-        deleteUndoController.request(user.id)
+        // The feed owns the Undo window (design D3): hand the delete over, then leave.
+        send(ProfileEvent.DeleteConfirmed(user.id))
         send(ProfileEvent.Close())
     }
 

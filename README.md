@@ -11,9 +11,9 @@ Clean Architecture (domain / data / presentation) with MVI, Koin for DI and Room
 |---|---|---|
 | `:users:domain` | `User` and sync models, `UserRepository` and `UserApiClient` interfaces, `UserDetailsValidator` | `:core:domain` |
 | `:users:data` | `OfflineFirstUserRepository`, `KtorUserApiClient`, `PendingSyncMerger`, DTOs, entity↔domain mappers, Koin module | users domain, `:core:database`, `:core:data` |
-| `:users:presentation` | `usersGraph` and its routes (`UsersRoute`, `CreateUserRoute`), `UsersListDetailRoot` (adaptive list-detail), `UsersViewModel` / `ProfileViewModel` (MVI) and their screens, `DeleteUndoController`, relative-time and error-message mapping, strings, Koin module | users domain, `:core:designsystem` |
-| `:core:domain` | `Result` / `EmptyResult` / `DataError` and their helpers | — |
-| `:core:data` | Ktor `HttpClientFactory`, the `HttpClient` `get` / `post` / `patch` / `delete` extensions, per-platform engine, BuildKonfig GoRest credentials, `ApplicationScope` qualifier | `:core:domain` |
+| `:users:presentation` | `usersGraph` and its routes (`UsersRoute`, `CreateUserRoute`), `UsersListDetailRoot` (adaptive list-detail), `UsersViewModel` / `ProfileViewModel` (MVI) and their screens, relative-time and error-message mapping, strings, Koin module | users domain, `:core:designsystem` |
+| `:core:domain` | `Result` / `EmptyResult` / `DataError` and their helpers, the `ApplicationScope` type | — |
+| `:core:data` | Ktor `HttpClientFactory`, the `HttpClient` `get` / `post` / `patch` / `delete` extensions, per-platform engine, BuildKonfig GoRest credentials | `:core:domain` |
 | `:core:database` | Room KMP `SliideDatabase`: `users` and `pending_sync` tables, their DAOs, `DatabaseTransactionRunner`, per-platform builder | — |
 | `:core:designsystem` | `SliideTheme` (palette, typography, shape/spacing/motion tokens), shared components (card, avatar, shimmer, segmented toggle, FAB, Undo snackbar, destructive button, banners), `DeviceConfiguration`, `SliideAdaptiveListDetailLayout` | — |
 | `:composeApp` | Shared app shell `App()` with the app's one `NavHost` (`NavigationRoot`), Koin assembly `initKoin(applicationScope)` / `initKoinIos()`, iOS framework `ComposeApp` | everything above |
@@ -190,9 +190,10 @@ online still show their error.
 Edits and deletes to a user that has never synced (temporary id) never call the API. They only merge into its
 `CREATE`.
 
-**Delete with Undo.** A confirmed delete only removes the user locally. Undo puts the user back without any network
-call. The real `DELETE` is sent by `finalizeDelete` once the Snackbar is dismissed, and it is queued if the device is
-offline. Sync skips users that are still in their Undo window.
+**Delete.** The repository has a single `deleteUser(user)`: like create and update, it writes locally first (the row
+goes), then sends the `DELETE` (a 404 counts as done) or queues it when offline. The Undo window lives entirely in the
+presentation layer (below), so the cache and the sync queue know nothing about it. A delete issued under a temporary id
+whose `CREATE` has synced in the meantime is resolved to the server id through an in-memory re-key map.
 
 **Replay and refresh.**
 - `syncPending()` sends the queue oldest first, one loop with no per-entry outcome type: a success clears the entry, a
@@ -261,7 +262,8 @@ a per-user sync, a periodic run and a pull-to-refresh never send the same entry 
 ### Application scope: operations outlive the screen
 
 Each platform's application creates one process-wide `CoroutineScope(SupervisorJob() + Dispatchers.Default)` and
-hands it to Koin, which binds it under the `ApplicationScope` qualifier:
+hands it to Koin, which binds it as an `ApplicationScope` (a small type in `:core:domain`, so presentation can inject
+it too without depending on data):
 - on Android, `SliideApplication` owns it as a property;
 - on iOS, `initKoinIos()` creates it, because there is no `Application` object and Swift can't build a Kotlin scope.
 
@@ -339,19 +341,26 @@ It also handles:
 - **User removed from the cache:** the profile closes. It does so silently when the user was a pending offline user
   that has just received its server id.
 
-**The Undo window outlives every screen.** A confirmed delete removes the user locally at once. `DeleteUndoController`
-is an app-wide Koin singleton with its own long-lived scope. It owns the 5-second window and guarantees every delete
-ends exactly once:
-- either with `restoreUser`, when the user presses Undo;
-- or with `finalizeDelete`, when the timer runs out, the snackbar is swiped away, or a newer delete starts.
+**The feed owns the Undo window.** Confirming a delete, from the feed or from the profile, adds the user to
+`UsersViewModel`'s `hiddenIds` and starts a 5-second timer in `viewModelScope`. The cache is left untouched:
+- Undo cancels the timer and un-hides the user, so the card animates back;
+- when the timer ends, the snackbar is swiped away, a newer delete is confirmed, or the ViewModel is cleared
+  (`onCleared`), `deleteUser` runs in the `ApplicationScope`. The user stays hidden until the cache drops it, so the
+  card never flashes back.
+
+The profile doesn't delete anything itself. It emits `ProfileEvent.DeleteConfirmed`, and `UsersListDetailRoot` hands
+it to the feed. Deleting the open profile's user clears the selection, so the detail pane moves on at once.
 
 The confirmation dialog, shared by the feed's long-press and the profile's Delete button, has a close icon at the top
 start, a large bin icon, and one full-width destructive **Delete** button. That is the same `DestructiveButton` the
 profile uses. There is no separate Cancel button; the close icon, back or an outside tap dismiss it.
 
-Its timer was not put in `viewModelScope`, because if the activity finished during the window, the delete would never
-be finalised and `refresh` would stay blocked. The snackbar is a normal `SnackbarHost` on the feed, driven by the
-controller's state, with a countdown line that resumes after rotation.
+`UsersViewModel` sits on the feed's back-stack entry, so the window survives rotation, backgrounding and the add-user
+screen. If the app is closed during the window, `onCleared` sends the delete at once. Only a killed process drops it,
+and then the cache was never changed, so nothing is left half-done. This replaced an earlier app-wide undo controller and a
+three-call repository contract (remove → restore *or* finalize) that could block refresh if broken
+([`simplify-delete-undo`](./openspec/changes/simplify-delete-undo)). The snackbar is a normal `SnackbarHost` on the
+feed, driven by the ViewModel's state, with a countdown line that resumes after rotation.
 
 **Where composables live.** Root and Screen composables stay next to their ViewModel, State and Action types
 (`users/`, `profile/`, `listdetail/`, `navigation/`). Every smaller composable of the feature lives in one package,
@@ -371,8 +380,8 @@ header and form, and the snackbar host. Each one ships its own previews. Generic
 **Deviations from the brief.** These were agreed during planning:
 - **"Added …" instead of "Last synced …":** the cache records when it first saw a user, not when that user was last
   synced.
-- **Removed locally on confirm:** the row disappears as soon as the delete is confirmed, and the network `DELETE` is
-  sent when the Undo window ends, rather than waiting for the 204. This keeps Undo instant and works offline.
+- **Hidden on confirm:** the row disappears as soon as the delete is confirmed, and the network `DELETE` is sent when
+  the Undo window ends, rather than waiting for the 204. This keeps Undo instant and works offline.
 - **An extra Status toggle (Active / Inactive):** GoRest requires a status when a user is created.
 - **A back arrow before "Profile" on full-screen profiles:** iOS has no system back button.
 
@@ -483,7 +492,8 @@ planned with OpenSpec, and Claude was asked to challenge the design before writi
 description didn't cover:
 - users created offline have no server id, which led to temporary ids that are re-keyed after sync;
 - a queued edit could overwrite a newer online edit, so a successful write now clears the stale entry;
-- a replay running during the Undo window could orphan a user on the server, so Undo-window users are skipped;
+- a replay running during the Undo window could orphan a user on the server, so Undo-window users are skipped (later
+  replaced by keeping the window out of the data layer and re-keying the delete instead);
 - a temporary rate limit (429) would have dropped real writes, so it is retried, and only errors that can never
   succeed delete a queued write.
 

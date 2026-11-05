@@ -8,7 +8,6 @@ import com.androidlearning.sliide.core.database.PendingOperation
 import com.androidlearning.sliide.core.domain.util.DataError
 import com.androidlearning.sliide.core.domain.util.Result
 import com.androidlearning.sliide.users.data.fake.RemoteRequest
-import com.androidlearning.sliide.users.domain.model.SyncReport
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
@@ -27,7 +26,7 @@ class OfflineFirstUserRepositorySingleUserSyncTest {
 
             val result = h.repository.syncPending(userId = 42)
 
-            assertThat(result).isEqualTo(Result.Success(SyncReport(synced = 1, rejected = 0)))
+            assertThat(result).isEqualTo(Result.Success(Unit))
             assertThat(h.apiClient.requests).containsExactly(
                 RemoteRequest.Update(42, details(name = "Edited", email = "user42@example.com")),
             )
@@ -44,7 +43,7 @@ class OfflineFirstUserRepositorySingleUserSyncTest {
 
             val result = h.repository.syncPending(userId = -1)
 
-            assertThat(result).isEqualTo(Result.Success(SyncReport(synced = 0, rejected = 1)))
+            assertThat(result).isEqualTo(Result.Success(Unit))
             assertThat(h.pendingSyncDao.entries).isEmpty()
             assertThat(h.userDao.getById(-1)).isEqualTo(temp)
         }
@@ -71,22 +70,8 @@ class OfflineFirstUserRepositorySingleUserSyncTest {
 
             val result = h.repository.syncPending(userId = 42)
 
-            assertThat(result).isEqualTo(Result.Success(SyncReport(synced = 1, rejected = 0)))
+            assertThat(result).isEqualTo(Result.Success(Unit))
             assertThat(h.pendingSyncDao.entries).isEmpty()
-        }
-
-    @Test
-    fun userInsideTheUndoWindowIsSkippedAndStaysQueued() =
-        runTest {
-            val h = RepositoryHarness(backgroundScope)
-            val entry = h.seedPending(h.seedUser(userEntity(42)), PendingOperation.UPDATE)
-            h.repository.removeUserLocally(42)
-
-            val result = h.repository.syncPending(userId = 42)
-
-            assertThat(result).isEqualTo(Result.Success(SyncReport(synced = 0, rejected = 0)))
-            assertThat(h.apiClient.requests).isEmpty()
-            assertThat(h.pendingSyncDao.entries).containsExactly(entry)
         }
 
     @Test
@@ -97,7 +82,7 @@ class OfflineFirstUserRepositorySingleUserSyncTest {
 
             val result = h.repository.syncPending(userId = 42)
 
-            assertThat(result).isEqualTo(Result.Success(SyncReport(synced = 0, rejected = 0)))
+            assertThat(result).isEqualTo(Result.Success(Unit))
             assertThat(h.apiClient.requests).isEmpty()
             assertThat(h.pendingSyncDao.entries.map { it.user.id }).containsExactly(41L)
         }
@@ -117,8 +102,8 @@ class OfflineFirstUserRepositorySingleUserSyncTest {
             advanceUntilIdle()
             h.apiClient.gate?.complete(Unit)
 
-            assertThat(fullPass.await()).isEqualTo(Result.Success(SyncReport(synced = 1, rejected = 0)))
-            assertThat(singleUser.await()).isEqualTo(Result.Success(SyncReport(synced = 1, rejected = 0)))
+            assertThat(fullPass.await()).isEqualTo(Result.Success(Unit))
+            assertThat(singleUser.await()).isEqualTo(Result.Success(Unit))
             assertThat(
                 h.apiClient.requests
                     .filterIsInstance<RemoteRequest.Update>()
@@ -144,7 +129,7 @@ class OfflineFirstUserRepositorySingleUserSyncTest {
             h.apiClient.gate?.complete(Unit)
 
             assertThat(slow.await()).isEqualTo(Result.Failure(DataError.Remote.REQUEST_TIMEOUT))
-            assertThat(other.await()).isEqualTo(Result.Success(SyncReport(synced = 1, rejected = 0)))
+            assertThat(other.await()).isEqualTo(Result.Success(Unit))
             assertThat(h.pendingSyncDao.entries.map { it.user.id }).containsExactly(41L)
         }
 
@@ -163,7 +148,7 @@ class OfflineFirstUserRepositorySingleUserSyncTest {
             advanceUntilIdle()
             h.apiClient.gate?.complete(Unit)
 
-            assertThat(replacement.await()).isEqualTo(Result.Success(SyncReport(synced = 0, rejected = 0)))
+            assertThat(replacement.await()).isEqualTo(Result.Success(Unit))
             assertThat(
                 h.apiClient.requests
                     .filterIsInstance<RemoteRequest.Update>()

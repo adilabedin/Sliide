@@ -219,7 +219,8 @@ fun UsersScreen(
 /**
  * Shows the Undo snackbar while [pendingDelete] is open (design D4). The effect is keyed by user id: when the window
  * closes elsewhere (timer, newer delete) the effect is cancelled, which removes the snackbar without sending a result.
- * Undo sends [UsersAction.OnUndoDelete]; a swipe-away sends [UsersAction.OnCommitDelete], both for the captured id.
+ * Undo sends [UsersAction.OnUndoDelete]; a swipe-away sends [UsersAction.OnCommitDelete]. Both act on the open window,
+ * and a snackbar for an older window has already been cancelled by then.
  */
 @Composable
 private fun UndoSnackbarEffect(
@@ -243,8 +244,8 @@ private fun UndoSnackbarEffect(
                 ),
             )
         when (result) {
-            SnackbarResult.ActionPerformed -> onAction(UsersAction.OnUndoDelete(pendingDelete.userId))
-            SnackbarResult.Dismissed -> onAction(UsersAction.OnCommitDelete(pendingDelete.userId))
+            SnackbarResult.ActionPerformed -> onAction(UsersAction.OnUndoDelete)
+            SnackbarResult.Dismissed -> onAction(UsersAction.OnCommitDelete)
         }
     }
 }

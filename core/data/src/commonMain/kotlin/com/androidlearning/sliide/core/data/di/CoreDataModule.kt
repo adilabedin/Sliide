@@ -6,15 +6,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.HttpClientEngine
 import kotlinx.serialization.json.Json
 import org.koin.core.module.Module
-import org.koin.core.qualifier.Qualifier
-import org.koin.core.qualifier.named
 import org.koin.dsl.module
-
-/**
- * Qualifier for the process-wide `CoroutineScope` the application creates and hands to Koin. Work launched in it
- * outlives any screen or ViewModel (spec: operation-lifetime).
- */
-val ApplicationScope: Qualifier = named("ApplicationScope")
 
 /**
  * Binds the platform [HttpClientEngine]: OkHttp on Android, Darwin on iOS. Platform-specific because each OS has its

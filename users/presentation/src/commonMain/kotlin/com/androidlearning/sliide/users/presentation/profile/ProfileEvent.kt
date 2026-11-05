@@ -9,6 +9,11 @@ sealed interface ProfileEvent {
         val message: UiText? = null,
     ) : ProfileEvent
 
+    /** Delete was confirmed for [userId]; the feed hides it and runs the Undo window. A [Close] follows. */
+    data class DeleteConfirmed(
+        val userId: Long,
+    ) : ProfileEvent
+
     /**
      * A new user was saved: leave the add-user screen and scroll the feed to the top. [status] says whether it reached
      * the server or was queued; it is a primitive so it can travel back to the feed through navigation.

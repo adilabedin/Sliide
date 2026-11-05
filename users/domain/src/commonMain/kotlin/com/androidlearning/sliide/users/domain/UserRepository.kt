@@ -3,7 +3,6 @@ package com.androidlearning.sliide.users.domain
 import com.androidlearning.sliide.core.domain.util.DataError
 import com.androidlearning.sliide.core.domain.util.EmptyResult
 import com.androidlearning.sliide.core.domain.util.Result
-import com.androidlearning.sliide.users.domain.model.SyncReport
 import com.androidlearning.sliide.users.domain.model.User
 import com.androidlearning.sliide.users.domain.model.UserDetails
 import com.androidlearning.sliide.users.domain.model.WriteStatus
@@ -37,48 +36,30 @@ interface UserRepository {
     suspend fun updateUser(user: User): Result<WriteStatus, DataError>
 
     /**
-     * Removes the user from the cache only (no network call) and returns its snapshot for Undo. Replay skips the
-     * user until [restoreUser] or [finalizeDelete] is called. Fails with [DataError.Local.NOT_FOUND] if absent.
-     *
-     * Contract: every successful call MUST be followed by exactly one [restoreUser] (Undo) or [finalizeDelete]
-     * (Snackbar dismissed). Until then, replay skips this user's pending entry and [refresh] will not replace the
-     * cache, for the lifetime of the process.
-     */
-    suspend fun removeUserLocally(id: Long): Result<User, DataError.Local>
-
-    /**
-     * Undo: puts a locally removed user back exactly as it was. No network call. Ends the Undo window opened by
-     * [removeUserLocally]; call it instead of, never in addition to, [finalizeDelete].
-     */
-    suspend fun restoreUser(user: User)
-
-    /**
-     * Commits a delete after the Undo window. Sends DELETE for a server-known user (404 counts as success) or
-     * queues it on a failure that may later succeed (including 401/403, as [WriteStatus.QUEUED_AUTH_FAILED]); a
-     * temp-id user just cancels its pending create without any network call.
+     * Deletes the user: removes it from the cache, then sends DELETE for a server-known user (404 counts as success) or
+     * queues it on a failure that may later succeed (including 401/403, as [WriteStatus.QUEUED_AUTH_FAILED]). A
+     * temp-id user just has its row and pending create removed, with no network call; a temp id whose create already
+     * synced in this process is deleted under its server id. [user] is a snapshot, so a user a refresh already removed
+     * from the cache still gets its DELETE sent.
      * Failure (e.g. [DataError.Validation], GoRest refusing the delete): the pending entry is dropped and the user stays
      * removed until the next [refresh] brings it back.
-     *
-     * Ends the Undo window opened by [removeUserLocally]; call it instead of, never in addition to, [restoreUser].
-     * Launch it in a scope that outlives the screen (an application-level scope, not `viewModelScope`): if it never
-     * runs, replay keeps skipping this user and [refresh] stays blocked for the rest of the process.
      */
-    suspend fun finalizeDelete(user: User): Result<WriteStatus, DataError>
+    suspend fun deleteUser(user: User): Result<WriteStatus, DataError>
 
     /**
      * Sends every pending entry once, oldest first, one at a time. An entry that fails in a way that may later succeed
      * stays queued for the next sync and the pass carries on; the first such error is returned.
-     * A rejected entry is only deleted from the queue and counted in [SyncReport.rejected]; the cached users are left
-     * as they are until the next [refresh] replaces the list with the server's. Concurrent calls share one pass.
+     * A rejected entry is only deleted from the queue; the cached users are left as they are until the next [refresh]
+     * replaces the list with the server's. Concurrent calls share one pass.
      */
-    suspend fun syncPending(): Result<SyncReport, DataError.Remote>
+    suspend fun syncPending(): EmptyResult<DataError.Remote>
 
     /**
-     * Sends at most [userId]'s pending entry, with the same success, rejection and Undo-window rules as [syncPending],
-     * and leaves every other entry untouched. With no entry for [userId] it sends nothing and reports zero. It may run
+     * Sends at most [userId]'s pending entry, with the same success and rejection rules as [syncPending],
+     * and leaves every other entry untouched. With no entry for [userId] it sends nothing and succeeds. It may run
      * alongside a full pass; no entry is ever sent twice.
      */
-    suspend fun syncPending(userId: Long): Result<SyncReport, DataError.Remote>
+    suspend fun syncPending(userId: Long): EmptyResult<DataError.Remote>
 
     /**
      * Runs [syncPending]; only if the queue is then empty, fetches the last page of `/users` and replaces the cache

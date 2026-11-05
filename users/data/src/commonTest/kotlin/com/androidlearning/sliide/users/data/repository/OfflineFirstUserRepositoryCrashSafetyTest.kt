@@ -80,16 +80,15 @@ class OfflineFirstUserRepositoryCrashSafetyTest {
         }
 
     @Test
-    fun processKilledDuringFinalizeDeleteLosesTheDeleteAndRefreshBringsTheUserBack() =
+    fun processKilledDuringDeleteLosesTheDeleteAndRefreshBringsTheUserBack() =
         runTest {
             val h = RepositoryHarness(backgroundScope)
             val user = h.seedUser(userEntity(42)).toUser()
             val killedScope = CoroutineScope(backgroundScope.coroutineContext + Job())
             val firstProcess = h.newRepository(applicationScope = killedScope)
-            firstProcess.removeUserLocally(42)
             h.apiClient.gate = CompletableDeferred()
 
-            launch { firstProcess.finalizeDelete(user) }
+            launch { firstProcess.deleteUser(user) }
             runCurrent()
             killedScope.cancel()
             runCurrent()
@@ -125,7 +124,7 @@ class OfflineFirstUserRepositoryCrashSafetyTest {
         }
 
     @Test
-    fun finalizeDeleteRejectedAfterPriorQueuedUpdateDropsTheMergedEntry() =
+    fun deleteRejectedAfterPriorQueuedUpdateDropsTheMergedEntry() =
         runTest {
             val h = RepositoryHarness(backgroundScope)
             val original = h.seedUser(userEntity(42, name = "Old"))
@@ -133,10 +132,9 @@ class OfflineFirstUserRepositoryCrashSafetyTest {
             h.repository.updateUser(original.toUser().copy(name = "Edited"))
             val edited = h.userDao.getById(42)!!
             h.apiClient.defaultError = null
-            h.repository.removeUserLocally(42)
             h.apiClient.deleteResults += Result.Failure(DataError.Validation(emptyList()))
 
-            val result = h.repository.finalizeDelete(edited.toUser())
+            val result = h.repository.deleteUser(edited.toUser())
 
             assertThat(result).isEqualTo(Result.Failure(DataError.Validation(emptyList())))
             assertThat(h.pendingSyncDao.entries).isEmpty()
@@ -144,14 +142,13 @@ class OfflineFirstUserRepositoryCrashSafetyTest {
         }
 
     @Test
-    fun finalizeDeleteRetryableKeepsMergedDeleteAndReturnsQueued() =
+    fun deleteRetryableKeepsMergedDeleteAndReturnsQueued() =
         runTest {
             val h = RepositoryHarness(backgroundScope)
             val user = h.seedUser(userEntity(42)).toUser()
-            h.repository.removeUserLocally(42)
             h.apiClient.deleteResults += Result.Failure(DataError.Remote.SERVER_ERROR)
 
-            assertThat(h.repository.finalizeDelete(user)).isEqualTo(Result.Success(WriteStatus.QUEUED))
+            assertThat(h.repository.deleteUser(user)).isEqualTo(Result.Success(WriteStatus.QUEUED))
             assertThat(
                 h.pendingSyncDao.entries
                     .single()

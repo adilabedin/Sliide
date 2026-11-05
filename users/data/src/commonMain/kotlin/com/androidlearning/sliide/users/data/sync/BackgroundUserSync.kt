@@ -3,14 +3,11 @@ package com.androidlearning.sliide.users.data.sync
 import com.androidlearning.sliide.core.domain.util.DataError
 import com.androidlearning.sliide.core.domain.util.Result
 import com.androidlearning.sliide.users.domain.UserRepository
-import com.androidlearning.sliide.users.domain.model.SyncReport
 import kotlin.coroutines.cancellation.CancellationException
 
 /** What one background run did. Informational only: every outcome counts as a finished run (design D4, no retry). */
 sealed interface BackgroundSyncOutcome {
-    data class Synced(
-        val report: SyncReport,
-    ) : BackgroundSyncOutcome
+    data object Synced : BackgroundSyncOutcome
 
     data class Stopped(
         val error: DataError.Remote,
@@ -29,7 +26,7 @@ class BackgroundUserSync(
         try {
             val result = if (userId == null) repository.syncPending() else repository.syncPending(userId)
             when (result) {
-                is Result.Success -> BackgroundSyncOutcome.Synced(result.data)
+                is Result.Success -> BackgroundSyncOutcome.Synced
                 is Result.Failure -> BackgroundSyncOutcome.Stopped(result.error)
             }
         } catch (e: CancellationException) {

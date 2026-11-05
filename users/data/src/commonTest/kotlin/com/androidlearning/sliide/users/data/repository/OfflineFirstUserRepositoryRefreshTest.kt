@@ -113,35 +113,4 @@ class OfflineFirstUserRepositoryRefreshTest {
             assertThat(h.apiClient.requests).containsExactly(RemoteRequest.Delete(9), RemoteRequest.FetchLastPage)
             assertThat(h.userDao.users.map { it.id }).containsExactly(1L)
         }
-
-    @Test
-    fun skippedUndoWindowEntryBlocksReplacement() =
-        runTest {
-            val h = RepositoryHarness(backgroundScope)
-            h.seedPending(h.seedUser(userEntity(42)), PendingOperation.UPDATE)
-            h.seedUser(userEntity(1))
-            h.repository.removeUserLocally(42)
-
-            val result = h.repository.refresh()
-
-            assertThat(result).isEqualTo(Result.Success(Unit))
-            assertThat(h.apiClient.requests).isEmpty()
-            assertThat(h.pendingSyncDao.entries.map { it.user.id }).containsExactly(42L)
-            assertThat(h.userDao.users.map { it.id }).containsExactly(1L)
-        }
-
-    @Test
-    fun userInsideUndoWindowWithoutPendingEntryBlocksReplacement() =
-        runTest {
-            val h = RepositoryHarness(backgroundScope)
-            h.seedUser(userEntity(42))
-            h.repository.removeUserLocally(42)
-            h.apiClient.fetchLastPageResults += Result.Success(listOf(remoteUser(42)))
-
-            h.repository.refresh()
-
-            // Replacing now would bring the user back while its Undo Snackbar is still showing.
-            assertThat(h.apiClient.requests).isEmpty()
-            assertThat(h.userDao.getById(42)).isNull()
-        }
 }

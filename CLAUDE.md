@@ -43,8 +43,8 @@ When creating or reshaping modules, read the **`kmp-module-structure`** skill an
 | `:users:domain` | `User` model, `UserRepository` interface. Depends on `:core:domain` (as `api`). |
 | `:users:data` | Repository implementation, `KtorUserApiClient`, DTOs and mappers, Koin module. Depends on users domain + `:core:database` + `:core:data`. |
 | `:users:presentation` | MVI ViewModel, Root/Screen composables, strings, Koin module. Depends on users domain + `:core:designsystem`. |
-| `:core:domain` | `Result` / `EmptyResult` / `DataError` and their helpers. No project deps; every module may depend on it. |
-| `:core:data` | Ktor `HttpClient` factory, `HttpClient` `get`/`post`/`patch`/`delete` extensions mapping to `DataError.Remote`, per-platform engine, BuildKonfig GoRest credentials (token from git-ignored `local.properties`), `ApplicationScope` Koin qualifier, `INTERNET` permission. Depends on `:core:domain`. |
+| `:core:domain` | `Result` / `EmptyResult` / `DataError` and their helpers, the `ApplicationScope` type (app-wide `CoroutineScope`, injected by type). No project deps; every module may depend on it. |
+| `:core:data` | Ktor `HttpClient` factory, `HttpClient` `get`/`post`/`patch`/`delete` extensions mapping to `DataError.Remote`, per-platform engine, BuildKonfig GoRest credentials (token from git-ignored `local.properties`), `INTERNET` permission. Depends on `:core:domain`. |
 | `:core:database` | Room KMP database, entities, DAOs, per-platform builder. |
 | `:core:designsystem` | `SliideTheme` (light/dark colour schemes, typography). |
 | `:composeApp` | Shared app shell, Koin assembly (`initKoin`), iOS framework `ComposeApp`. |

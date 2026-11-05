@@ -3,13 +3,12 @@ package com.androidlearning.sliide.users.presentation.users
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.androidlearning.sliide.core.domain.util.ApplicationScope
 import com.androidlearning.sliide.core.domain.util.DataError
 import com.androidlearning.sliide.core.domain.util.Result
 import com.androidlearning.sliide.users.domain.UserRepository
 import com.androidlearning.sliide.users.domain.model.User
-import com.androidlearning.sliide.users.presentation.delete.DeleteMessage
-import com.androidlearning.sliide.users.presentation.delete.DeleteUndoController
-import com.androidlearning.sliide.users.presentation.delete.PendingDelete
+import com.androidlearning.sliide.users.domain.model.WriteStatus
 import com.androidlearning.sliide.users.presentation.generated.resources.Res
 import com.androidlearning.sliide.users.presentation.generated.resources.delete_failed
 import com.androidlearning.sliide.users.presentation.generated.resources.delete_refused
@@ -26,7 +25,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
@@ -37,6 +35,7 @@ import kotlinx.coroutines.launch
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
 /**
@@ -44,18 +43,31 @@ import kotlin.time.Instant
  * [UserRepository.observeUsers]. State is one `combine` of the cache, a minute ticker (relative times), the Undo
  * window and the refresh/UI flags.
  *
+ * It owns the Undo window of every delete, from the feed or handed over by the profile (spec: user-deletion): a
+ * confirmed user is only hidden, and [UserRepository.deleteUser] runs once [undoWindow] passes without Undo. The cache
+ * is not touched until then, so a refresh during the window can't clash with it. The delete runs in [applicationScope],
+ * and [onCleared] sends one still waiting, so it goes through even if the feed is closed.
+ *
  * It also owns which profile is open (spec: adaptive-layout): the user the person chose, kept in [savedStateHandle] so
  * it survives process death, or, beside the list on two-pane layouts, the first user by default.
  */
 class UsersViewModel(
     private val userRepository: UserRepository,
-    private val deleteUndoController: DeleteUndoController,
+    private val applicationScope: ApplicationScope,
     private val clock: Clock,
     private val savedStateHandle: SavedStateHandle,
     private val tick: Duration = 1.minutes,
+    private val undoWindow: Duration = DEFAULT_UNDO_WINDOW,
 ) : ViewModel() {
     private var hasStarted = false
     private var refreshJob: Job? = null
+
+    /** The open Undo window, if any; [undoTimer] finishes it when [undoWindow] has passed. */
+    private val pendingDelete = MutableStateFlow<PendingDelete?>(null)
+    private var undoTimer: Job? = null
+
+    /** Users deleted but still in the cache: during the Undo window and while their delete runs. */
+    private val hiddenIds = MutableStateFlow<Set<Long>>(emptySet())
 
     private val refresh = MutableStateFlow(RefreshState())
     private val local = MutableStateFlow(LocalState(chosenUserId = savedStateHandle[KEY_CHOSEN_USER]))
@@ -86,16 +98,15 @@ class UsersViewModel(
         combine(
             cachedUsers,
             ticker,
-            deleteUndoController.pending,
+            combine(pendingDelete, hiddenIds, ::Pair),
             refresh,
             local,
-        ) { users, now, pending, refresh, local ->
-            buildState(users, now, pending, refresh, local)
+        ) { users, now, (pending, hidden), refresh, local ->
+            buildState(users, now, pending, hidden, refresh, local)
         }.onStart {
             if (!hasStarted) {
                 hasStarted = true
                 startRefresh(RefreshTrigger.Launch)
-                observeDeleteMessages()
             }
         }.stateIn(
             scope = viewModelScope,
@@ -114,11 +125,12 @@ class UsersViewModel(
             UsersAction.OnDeleteConfirm -> {
                 val id = local.value.confirmDeleteId ?: return
                 local.update { it.copy(confirmDeleteId = null) }
-                deleteUndoController.request(id)
+                confirmDelete(id)
             }
 
-            is UsersAction.OnUndoDelete -> deleteUndoController.undo(action.userId)
-            is UsersAction.OnCommitDelete -> deleteUndoController.commitNow(action.userId)
+            is UsersAction.OnConfirmDelete -> confirmDelete(action.userId)
+            UsersAction.OnUndoDelete -> undoDelete()
+            UsersAction.OnCommitDelete -> finishDelete()
             is UsersAction.OnSelectionChange -> {
                 savedStateHandle[KEY_CHOSEN_USER] = action.userId
                 local.update { it.copy(chosenUserId = action.userId) }
@@ -164,27 +176,66 @@ class UsersViewModel(
             }
     }
 
-    private fun observeDeleteMessages() {
-        deleteUndoController.messages
-            .onEach { message ->
-                when (message) {
-                    is DeleteMessage.FinalizeFailed -> {
-                        val text =
-                            if (message.error is DataError.Validation) Res.string.delete_refused else Res.string.delete_failed
-                        send(
-                            UsersEvent.ShowMessage(
-                                UiText.Resource(
-                                    text,
-                                    listOf(message.userName),
-                                ),
-                            ),
-                        )
-                    }
+    /**
+     * Hides [userId] and opens its Undo window. Only one Undo is offered at a time, so a delete still waiting on its Undo
+     * is sent now. If the user is the open profile, the selection is cleared so the detail pane moves on at once.
+     */
+    private fun confirmDelete(userId: Long) {
+        val user = lastCachedUsers?.firstOrNull { it.id == userId } ?: return
+        finishDelete()
+        hiddenIds.update { it + userId }
+        if (local.value.chosenUserId == userId) {
+            savedStateHandle[KEY_CHOSEN_USER] = null
+            local.update { it.copy(chosenUserId = null) }
+        }
+        pendingDelete.value = PendingDelete(user = user, deadline = clock.now() + undoWindow)
+        undoTimer =
+            viewModelScope.launch {
+                delay(undoWindow)
+                finishDelete()
+            }
+    }
 
-                    is DeleteMessage.QueuedAuthFailed ->
-                        send(UsersEvent.ShowMessage(UiText.Resource(Res.string.write_queued_auth_failed)))
+    private fun undoDelete() {
+        val pending = pendingDelete.value ?: return
+        undoTimer?.cancel()
+        pendingDelete.value = null
+        hiddenIds.update { it - pending.user.id }
+    }
+
+    /**
+     * Sends the delete still waiting on its Undo, if any. It runs in [applicationScope] because the user confirmed it,
+     * so it must go through even if the feed closes first. The user stays hidden until the cache has dropped it.
+     */
+    private fun finishDelete() {
+        val user = pendingDelete.value?.user ?: return
+        undoTimer?.cancel()
+        pendingDelete.value = null
+        applicationScope.launch {
+            val result = userRepository.deleteUser(user)
+            hiddenIds.update { it - user.id }
+            result.toDeleteMessage(user)?.let { _events.trySend(UsersEvent.ShowMessage(it)) }
+        }
+    }
+
+    private fun Result<WriteStatus, DataError>.toDeleteMessage(user: User): UiText? =
+        when (this) {
+            is Result.Failure -> {
+                val text = if (error is DataError.Validation) Res.string.delete_refused else Res.string.delete_failed
+                UiText.Resource(text, listOf(user.name))
+            }
+
+            is Result.Success ->
+                when (data) {
+                    // A delete queued because the device is offline needs no message (spec: user-deletion).
+                    WriteStatus.SYNCED, WriteStatus.QUEUED -> null
+                    WriteStatus.QUEUED_AUTH_FAILED -> UiText.Resource(Res.string.write_queued_auth_failed)
                 }
-            }.launchIn(viewModelScope)
+        }
+
+    /** The Undo snackbar goes with the feed, so a delete still waiting on it is final now. */
+    override fun onCleared() {
+        finishDelete()
     }
 
     private fun send(event: UsersEvent) {
@@ -195,10 +246,11 @@ class UsersViewModel(
         users: List<User>?,
         now: Instant,
         pending: PendingDelete?,
+        hiddenIds: Set<Long>,
         refresh: RefreshState,
         local: LocalState,
     ): UsersState {
-        val cards = users.orEmpty().map { it.toUserUi(now) }
+        val cards = users.orEmpty().filterNot { it.id in hiddenIds }.map { it.toUserUi(now) }
         val content =
             when {
                 users == null -> FeedContent.Loading
@@ -229,7 +281,7 @@ class UsersViewModel(
                         userId = it.user.id,
                         userName = it.user.name,
                         deadline = it.deadline,
-                        windowMillis = deleteUndoController.window.inWholeMilliseconds,
+                        windowMillis = undoWindow.inWholeMilliseconds,
                     )
                 },
             confirmDelete = local.confirmDeleteId?.let { id -> cards.firstOrNull { it.id == id } },
@@ -238,6 +290,12 @@ class UsersViewModel(
             scrollToTopUserId = local.scrollToTopUserId,
         )
     }
+
+    /** A user hidden for its Undo window, which ends at [deadline]. */
+    private data class PendingDelete(
+        val user: User,
+        val deadline: Instant,
+    )
 
     /** What started the running refresh; only [Pull] shows the pull indicator (design D1). */
     private enum class RefreshTrigger { Launch, Pull, Retry }
@@ -256,7 +314,8 @@ class UsersViewModel(
         val scrollToTopUserId: Long? = null,
     )
 
-    private companion object {
-        const val KEY_CHOSEN_USER = "users_chosen_user"
+    companion object {
+        val DEFAULT_UNDO_WINDOW: Duration = 5.seconds
+        private const val KEY_CHOSEN_USER = "users_chosen_user"
     }
 }

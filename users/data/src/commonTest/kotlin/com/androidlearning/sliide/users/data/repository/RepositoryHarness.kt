@@ -19,7 +19,7 @@ import kotlinx.coroutines.CoroutineScope
 
 /**
  * Real [OfflineFirstUserRepository] over in-memory fakes. [newRepository] builds a second instance over the same
- * tables, which is how tests simulate an app restart (in-memory state such as the Undo-window set is lost).
+ * tables, which is how tests simulate an app restart (in-memory state such as the temp-id re-key map is lost).
  */
 class RepositoryHarness(
     private val scope: CoroutineScope,
