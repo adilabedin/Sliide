@@ -1,5 +1,7 @@
 package com.androidlearning.sliide.users.presentation.users
 
+import androidx.lifecycle.SavedStateHandle
+import app.cash.turbine.Event
 import app.cash.turbine.test
 import assertk.assertThat
 import assertk.assertions.containsExactly
@@ -22,7 +24,6 @@ import com.androidlearning.sliide.users.presentation.generated.resources.delete_
 import com.androidlearning.sliide.users.presentation.generated.resources.delete_refused
 import com.androidlearning.sliide.users.presentation.generated.resources.error_no_internet
 import com.androidlearning.sliide.users.presentation.generated.resources.write_queued_auth_failed
-import com.androidlearning.sliide.users.presentation.profile.ProfileKey
 import com.androidlearning.sliide.users.presentation.util.RelativeTime
 import com.androidlearning.sliide.users.presentation.util.UiText
 import kotlinx.coroutines.CompletableDeferred
@@ -56,10 +57,17 @@ class UsersViewModelTest {
         Dispatchers.resetMain()
     }
 
-    private fun TestScope.viewModel(): Pair<UsersViewModel, DeleteUndoController> {
+    private fun TestScope.viewModel(savedStateHandle: SavedStateHandle = SavedStateHandle()): Pair<UsersViewModel, DeleteUndoController> {
         val clock = SchedulerClock(testScheduler)
         val controller = DeleteUndoController(repository = repository, scope = backgroundScope, clock = clock)
-        return UsersViewModel(userRepository = repository, deleteUndoController = controller, clock = clock) to controller
+        val viewModel =
+            UsersViewModel(
+                userRepository = repository,
+                deleteUndoController = controller,
+                clock = clock,
+                savedStateHandle = savedStateHandle,
+            )
+        return viewModel to controller
     }
 
     @Test
@@ -450,9 +458,16 @@ class UsersViewModelTest {
     fun createdUserScrollsTheFeedToTheTop() =
         runTest {
             val (viewModel) = viewModel()
-            viewModel.events.test {
+            viewModel.state.test {
+                repository.emit(listOf(jane))
+                // The create lands in the cache before the add-user screen reports it.
+                repository.emit(listOf(rahul, jane))
+
                 viewModel.onAction(UsersAction.OnUserCreated)
-                assertThat(awaitItem()).isEqualTo(UsersEvent.ScrollToTop)
+                assertThat(expectMostRecentItem().scrollToTopUserId).isEqualTo(rahul.id)
+
+                viewModel.onAction(UsersAction.OnScrolledToTop)
+                assertThat(expectMostRecentItem().scrollToTopUserId).isNull()
             }
         }
 
@@ -511,18 +526,80 @@ class UsersViewModelTest {
         }
 
     @Test
-    fun creatingHighlightsNothingAndHasNoDefault() =
+    fun closingTheChosenProfileFallsBackToTheDefault() =
         runTest {
             val (viewModel) = viewModel()
             viewModel.state.test {
                 viewModel.onAction(UsersAction.OnPaneLayoutChange(isTwoPane = true))
                 repository.emit(listOf(jane, rahul))
+                viewModel.onAction(UsersAction.OnSelectionChange(rahul.id))
 
-                viewModel.onAction(UsersAction.OnSelectionChange(ProfileKey.CREATE))
+                viewModel.onAction(UsersAction.OnSelectionChange(null))
 
                 val state = expectMostRecentItem()
-                assertThat(state.defaultSelectedUserId).isNull()
-                assertThat(state.selectedUserId).isNull()
+                assertThat(state.defaultSelectedUserId).isEqualTo(jane.id)
+                assertThat(state.selectedUserId).isEqualTo(jane.id)
+            }
+        }
+
+    @Test
+    fun aChosenUserThatDisappearsStaysChosenUntilTheProfileClosesIt() =
+        runTest {
+            val (viewModel) = viewModel()
+            viewModel.state.test {
+                viewModel.onAction(UsersAction.OnPaneLayoutChange(isTwoPane = true))
+                repository.emit(listOf(jane, rahul))
+                viewModel.onAction(UsersAction.OnSelectionChange(rahul.id))
+
+                repository.emit(listOf(jane))
+                val whileOpen = expectMostRecentItem()
+                assertThat(whileOpen.selectedUserId).isEqualTo(rahul.id)
+                assertThat(whileOpen.defaultSelectedUserId).isNull()
+
+                viewModel.onAction(UsersAction.OnSelectionChange(null))
+                assertThat(expectMostRecentItem().selectedUserId).isEqualTo(jane.id)
+            }
+        }
+
+    @Test
+    fun aFeedThatStoppedCollectingComesBackWithItsUsersAndDefault() =
+        runTest {
+            val (viewModel) = viewModel()
+            viewModel.state.test {
+                viewModel.onAction(UsersAction.OnPaneLayoutChange(isTwoPane = true))
+                repository.emit(listOf(jane, rahul))
+                assertThat(expectMostRecentItem().selectedUserId).isEqualTo(jane.id)
+            }
+            // Away long enough for the shared state to stop, e.g. while the add-user screen is open; the cache then takes
+            // a moment to answer the new subscription, as Room does.
+            advanceTimeBy(10.seconds)
+            repository.observeDelay = 1.seconds
+
+            viewModel.state.test {
+                advanceTimeBy(2.seconds)
+                val states =
+                    listOf(awaitItem()) +
+                        cancelAndConsumeRemainingEvents().filterIsInstance<Event.Item<UsersState>>().map { it.value }
+                states.forEach { state ->
+                    assertThat(state.content).isEqualTo(FeedContent.Users)
+                    assertThat(state.selectedUserId).isEqualTo(jane.id)
+                }
+            }
+        }
+
+    @Test
+    fun theChosenUserSurvivesProcessDeath() =
+        runTest {
+            val savedStateHandle = SavedStateHandle()
+            val (before) = viewModel(savedStateHandle)
+            before.onAction(UsersAction.OnSelectionChange(rahul.id))
+
+            val (restored) = viewModel(savedStateHandle)
+
+            assertThat(restored.state.value.selectedUserId).isEqualTo(rahul.id)
+            restored.state.test {
+                repository.emit(listOf(jane, rahul))
+                assertThat(expectMostRecentItem().selectedUserId).isEqualTo(rahul.id)
             }
         }
 

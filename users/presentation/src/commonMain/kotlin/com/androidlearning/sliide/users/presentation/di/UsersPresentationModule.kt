@@ -20,6 +20,8 @@ val usersPresentationModule =
                 clock = get(),
             )
         }
-        viewModel { UsersViewModel(userRepository = get(), deleteUndoController = get(), clock = get()) }
+        viewModel {
+            UsersViewModel(userRepository = get(), deleteUndoController = get(), clock = get(), savedStateHandle = get())
+        }
         viewModelOf(::ProfileViewModel)
     }

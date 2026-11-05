@@ -1,5 +1,6 @@
 package com.androidlearning.sliide.users.presentation.users
 
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.androidlearning.sliide.core.domain.util.DataError
@@ -13,7 +14,6 @@ import com.androidlearning.sliide.users.presentation.generated.resources.Res
 import com.androidlearning.sliide.users.presentation.generated.resources.delete_failed
 import com.androidlearning.sliide.users.presentation.generated.resources.delete_refused
 import com.androidlearning.sliide.users.presentation.generated.resources.write_queued_auth_failed
-import com.androidlearning.sliide.users.presentation.profile.ProfileKey
 import com.androidlearning.sliide.users.presentation.util.UiText
 import com.androidlearning.sliide.users.presentation.util.toUiText
 import kotlinx.coroutines.Job
@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
@@ -42,27 +43,36 @@ import kotlin.time.Instant
  * The users feed (design D5). The cache is the only source of users: refresh results reach the screen solely through
  * [UserRepository.observeUsers]. State is one `combine` of the cache, a minute ticker (relative times), the Undo
  * window and the refresh/UI flags.
+ *
+ * It also owns which profile is open (spec: adaptive-layout): the user the person chose, kept in [savedStateHandle] so
+ * it survives process death, or, beside the list on two-pane layouts, the first user by default.
  */
 class UsersViewModel(
     private val userRepository: UserRepository,
     private val deleteUndoController: DeleteUndoController,
     private val clock: Clock,
+    private val savedStateHandle: SavedStateHandle,
     private val tick: Duration = 1.minutes,
 ) : ViewModel() {
     private var hasStarted = false
     private var refreshJob: Job? = null
 
     private val refresh = MutableStateFlow(RefreshState())
-    private val local = MutableStateFlow(LocalState())
+    private val local = MutableStateFlow(LocalState(chosenUserId = savedStateHandle[KEY_CHOSEN_USER]))
 
     private val _events = Channel<UsersEvent>(Channel.BUFFERED)
     val events: Flow<UsersEvent> = _events.receiveAsFlow()
 
+    // The last list the cache gave, so a feed that stopped collecting (e.g. while the add-user screen is open) comes
+    // back showing it rather than the loading state, and keeps its default selection.
+    private var lastCachedUsers: List<User>? = null
+
     private val cachedUsers: Flow<List<User>?> =
         userRepository
             .observeUsers()
+            .onEach { lastCachedUsers = it }
             .map<List<User>, List<User>?> { it }
-            .onStart { emit(null) }
+            .onStart { emit(lastCachedUsers) }
 
     private val ticker: Flow<Instant> =
         flow {
@@ -73,7 +83,13 @@ class UsersViewModel(
         }
 
     val state: StateFlow<UsersState> =
-        combine(cachedUsers, ticker, deleteUndoController.pending, refresh, local) { users, now, pending, refresh, local ->
+        combine(
+            cachedUsers,
+            ticker,
+            deleteUndoController.pending,
+            refresh,
+            local,
+        ) { users, now, pending, refresh, local ->
             buildState(users, now, pending, refresh, local)
         }.onStart {
             if (!hasStarted) {
@@ -84,7 +100,8 @@ class UsersViewModel(
         }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
-            initialValue = UsersState(),
+            // A profile restored after process death is open from the first frame, not slid in once the cache loads.
+            initialValue = UsersState(selectedUserId = local.value.chosenUserId),
         )
 
     fun onAction(action: UsersAction) {
@@ -99,11 +116,28 @@ class UsersViewModel(
                 local.update { it.copy(confirmDeleteId = null) }
                 deleteUndoController.request(id)
             }
+
             is UsersAction.OnUndoDelete -> deleteUndoController.undo(action.userId)
             is UsersAction.OnCommitDelete -> deleteUndoController.commitNow(action.userId)
-            is UsersAction.OnSelectionChange -> local.update { it.copy(chosenKey = action.key) }
+            is UsersAction.OnSelectionChange -> {
+                savedStateHandle[KEY_CHOSEN_USER] = action.userId
+                local.update { it.copy(chosenUserId = action.userId) }
+            }
+
             is UsersAction.OnPaneLayoutChange -> local.update { it.copy(isTwoPane = action.isTwoPane) }
-            UsersAction.OnUserCreated -> send(UsersEvent.ScrollToTop)
+            UsersAction.OnUserCreated ->
+                viewModelScope.launch {
+                    // The create is already in the cache, which may be ahead of this feed's own (restarting) collection.
+                    val topUserId =
+                        userRepository
+                            .observeUsers()
+                            .first()
+                            .firstOrNull()
+                            ?.id
+                    local.update { it.copy(scrollToTopUserId = topUserId) }
+                }
+
+            UsersAction.OnScrolledToTop -> local.update { it.copy(scrollToTopUserId = null) }
             is UsersAction.OnShowMessage -> send(UsersEvent.ShowMessage(action.message))
         }
     }
@@ -135,9 +169,18 @@ class UsersViewModel(
             .onEach { message ->
                 when (message) {
                     is DeleteMessage.FinalizeFailed -> {
-                        val text = if (message.error is DataError.Validation) Res.string.delete_refused else Res.string.delete_failed
-                        send(UsersEvent.ShowMessage(UiText.Resource(text, listOf(message.userName))))
+                        val text =
+                            if (message.error is DataError.Validation) Res.string.delete_refused else Res.string.delete_failed
+                        send(
+                            UsersEvent.ShowMessage(
+                                UiText.Resource(
+                                    text,
+                                    listOf(message.userName),
+                                ),
+                            ),
+                        )
                     }
+
                     is DeleteMessage.QueuedAuthFailed ->
                         send(UsersEvent.ShowMessage(UiText.Resource(Res.string.write_queued_auth_failed)))
                 }
@@ -164,14 +207,12 @@ class UsersViewModel(
                 refresh.lastError != null -> FeedContent.Error(refresh.lastError.toUiText())
                 else -> FeedContent.Empty
             }
+        // A chosen user stays chosen until the profile closes it (OnSelectionChange(null)), even if it vanished from the
+        // cache: the profile reports why ("no longer available"), and a delete from the profile clears it before Undo.
+        val chosenUserId = local.chosenUserId
         val defaultSelectedUserId =
-            cards.firstOrNull()?.id?.takeIf { local.isTwoPane && local.chosenKey == null && content == FeedContent.Users }
-        val selectedUserId =
-            when (local.chosenKey) {
-                null -> defaultSelectedUserId
-                ProfileKey.CREATE -> null
-                else -> local.chosenKey
-            }
+            cards.firstOrNull()?.id?.takeIf { local.isTwoPane && chosenUserId == null && content == FeedContent.Users }
+        val selectedUserId = chosenUserId ?: defaultSelectedUserId
         return UsersState(
             users = cards,
             content = content,
@@ -194,6 +235,7 @@ class UsersViewModel(
             confirmDelete = local.confirmDeleteId?.let { id -> cards.firstOrNull { it.id == id } },
             selectedUserId = selectedUserId,
             defaultSelectedUserId = defaultSelectedUserId,
+            scrollToTopUserId = local.scrollToTopUserId,
         )
     }
 
@@ -209,7 +251,12 @@ class UsersViewModel(
 
     private data class LocalState(
         val confirmDeleteId: Long? = null,
-        val chosenKey: Long? = null,
+        val chosenUserId: Long? = null,
         val isTwoPane: Boolean = false,
+        val scrollToTopUserId: Long? = null,
     )
+
+    private companion object {
+        const val KEY_CHOSEN_USER = "users_chosen_user"
+    }
 }

@@ -2,32 +2,40 @@ package com.androidlearning.sliide.core.designsystem.layout
 
 import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
 import androidx.compose.runtime.Composable
-
-/**
- * Window width buckets that change the structure of a screen (spec: adaptive-layout).
- * Compact: under 600dp (phone portrait). Medium: 600dp to under 840dp (phone landscape, small tablet).
- * Expanded: 840dp and wider (tablet landscape, desktop).
- */
-enum class DeviceConfiguration {
-    COMPACT,
-    MEDIUM,
-    EXPANDED,
-    ;
-
-    companion object {
-        const val MEDIUM_MIN_WIDTH_DP = 600
-        const val EXPANDED_MIN_WIDTH_DP = 840
-
-        fun fromWidthDp(widthDp: Int): DeviceConfiguration =
-            when {
-                widthDp >= EXPANDED_MIN_WIDTH_DP -> EXPANDED
-                widthDp >= MEDIUM_MIN_WIDTH_DP -> MEDIUM
-                else -> COMPACT
-            }
-    }
-}
+import androidx.window.core.layout.WindowSizeClass
+import androidx.window.core.layout.WindowSizeClass.Companion.HEIGHT_DP_EXPANDED_LOWER_BOUND
+import androidx.window.core.layout.WindowSizeClass.Companion.HEIGHT_DP_MEDIUM_LOWER_BOUND
+import androidx.window.core.layout.WindowSizeClass.Companion.WIDTH_DP_EXPANDED_LOWER_BOUND
+import androidx.window.core.layout.WindowSizeClass.Companion.WIDTH_DP_MEDIUM_LOWER_BOUND
 
 /** The [DeviceConfiguration] of the current window. */
 @Composable
-fun currentDeviceConfiguration(): DeviceConfiguration =
-    DeviceConfiguration.fromWidthDp(currentWindowAdaptiveInfo().windowSizeClass.minWidthDp)
+fun currentDeviceConfiguration(): DeviceConfiguration = DeviceConfiguration.fromWindowSizeClass(currentWindowAdaptiveInfo().windowSizeClass)
+
+/** The kind of window the app is drawn in, for layouts whose structure (not just size) changes with it. */
+enum class DeviceConfiguration {
+    MOBILE_PORTRAIT,
+    MOBILE_LANDSCAPE,
+    TABLET_PORTRAIT,
+    TABLET_LANDSCAPE,
+    DESKTOP,
+    ;
+
+    companion object {
+        /**
+         * Every window falls into exactly one bucket: a narrow window is a phone held upright, whatever its height,
+         * and a short one that is wider is a phone on its side. Only then do the medium and expanded widths split
+         * tablets from desktops, so a small phone in landscape or a half-open foldable is never taken for a desktop.
+         */
+        fun fromWindowSizeClass(windowSizeClass: WindowSizeClass): DeviceConfiguration =
+            with(windowSizeClass) {
+                when {
+                    minWidthDp < WIDTH_DP_MEDIUM_LOWER_BOUND -> MOBILE_PORTRAIT
+                    minHeightDp < HEIGHT_DP_MEDIUM_LOWER_BOUND -> MOBILE_LANDSCAPE
+                    minWidthDp < WIDTH_DP_EXPANDED_LOWER_BOUND -> TABLET_PORTRAIT
+                    minHeightDp < HEIGHT_DP_EXPANDED_LOWER_BOUND -> TABLET_LANDSCAPE
+                    else -> DESKTOP
+                }
+            }
+    }
+}

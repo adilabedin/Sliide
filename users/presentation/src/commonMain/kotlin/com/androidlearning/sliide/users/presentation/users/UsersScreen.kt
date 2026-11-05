@@ -11,8 +11,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.grid.LazyGridState
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Person
@@ -37,8 +35,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.androidlearning.sliide.core.designsystem.component.ErrorBanner
 import com.androidlearning.sliide.core.designsystem.component.FullScreenMessage
 import com.androidlearning.sliide.core.designsystem.component.SliideFab
-import com.androidlearning.sliide.core.designsystem.layout.DeviceConfiguration
-import com.androidlearning.sliide.core.designsystem.layout.currentDeviceConfiguration
 import com.androidlearning.sliide.core.designsystem.theme.SliideSpacing
 import com.androidlearning.sliide.core.designsystem.theme.SliideTheme
 import com.androidlearning.sliide.users.presentation.composables.DeleteUserDialog
@@ -81,16 +77,10 @@ fun UsersRoot(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val listState = rememberLazyListState()
-    val gridState = rememberLazyGridState()
     val scope = rememberCoroutineScope()
 
     ObserveAsEvents(viewModel.events) { event ->
         when (event) {
-            UsersEvent.ScrollToTop ->
-                scope.launch {
-                    listState.animateScrollToItem(0)
-                    gridState.animateScrollToItem(0)
-                }
             is UsersEvent.ShowMessage -> scope.launch { snackbarHostState.showSnackbar(event.message.resolve()) }
         }
     }
@@ -102,7 +92,6 @@ fun UsersRoot(
         onAddUserClick = onAddUserClick,
         snackbarHostState = snackbarHostState,
         listState = listState,
-        gridState = gridState,
         modifier = modifier,
     )
 }
@@ -116,15 +105,21 @@ fun UsersScreen(
     onAddUserClick: () -> Unit,
     snackbarHostState: SnackbarHostState,
     listState: LazyListState,
-    gridState: LazyGridState,
     modifier: Modifier = Modifier,
     currentTime: () -> Instant = { Clock.System.now() },
 ) {
-    val columns = if (currentDeviceConfiguration() == DeviceConfiguration.MEDIUM) 2 else 1
     // Pinned: the bar never moves or resizes; it only tints while the lazy feed scrolls beneath it (spec: user-feed).
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
-    val fabExpanded by remember(listState, gridState) {
-        derivedStateOf { listState.firstVisibleItemIndex == 0 && gridState.firstVisibleItemIndex == 0 }
+    val fabExpanded by remember(listState) {
+        derivedStateOf { listState.firstVisibleItemIndex == 0 }
+    }
+
+    // After a create, show the new user at the top (spec: user-feed). Requested during composition, so it applies in the
+    // same measure pass that inserts the card, rather than after the list has kept its place on the card below.
+    val scrollToTopUserId = state.scrollToTopUserId
+    if (scrollToTopUserId != null && state.users.firstOrNull()?.id == scrollToTopUserId) {
+        listState.requestScrollToItem(0)
+        LaunchedEffect(scrollToTopUserId) { onAction(UsersAction.OnScrolledToTop) }
     }
 
     UndoSnackbarEffect(state.pendingDelete, snackbarHostState, onAction)
@@ -151,7 +146,6 @@ fun UsersScreen(
         when (val content = state.content) {
             FeedContent.Loading ->
                 UsersFeedPlaceholders(
-                    columns = columns,
                     loadingDescription = stringResource(Res.string.users_loading),
                     modifier = contentModifier,
                 )
@@ -203,10 +197,8 @@ fun UsersScreen(
                         }
                         UsersFeed(
                             users = state.users,
-                            columns = columns,
                             selectedUserId = state.selectedUserId,
                             listState = listState,
-                            gridState = gridState,
                             onUserClick = onUserClick,
                             onDeleteRequest = { onAction(UsersAction.OnDeleteRequest(it)) },
                         )
@@ -273,7 +265,6 @@ private fun UsersScreenPreview(
                 onAddUserClick = {},
                 snackbarHostState = remember { SnackbarHostState() },
                 listState = rememberLazyListState(),
-                gridState = rememberLazyGridState(),
                 currentTime = { PREVIEW_NOW },
             )
         }

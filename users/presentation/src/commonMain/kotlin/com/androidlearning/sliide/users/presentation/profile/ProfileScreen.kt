@@ -37,6 +37,7 @@ import com.androidlearning.sliide.core.designsystem.theme.SliideSpacing
 import com.androidlearning.sliide.core.designsystem.theme.SliideTheme
 import com.androidlearning.sliide.users.domain.model.Gender
 import com.androidlearning.sliide.users.domain.model.UserStatus
+import com.androidlearning.sliide.users.domain.model.WriteStatus
 import com.androidlearning.sliide.users.presentation.composables.DeleteUserDialog
 import com.androidlearning.sliide.users.presentation.composables.ProfileFormCard
 import com.androidlearning.sliide.users.presentation.composables.ProfileHeaderSection
@@ -55,8 +56,9 @@ import org.jetbrains.compose.resources.stringResource
 private val FormMaxWidth = 560.dp
 
 /**
- * The profile's ViewModel-wired entry point. [profileKey] is a user id or [ProfileKey.CREATE]; the caller owns
- * navigation: [onClose] leaves the profile (with a message for the feed), [onCreated] does the same after a create.
+ * The profile's ViewModel-wired entry point. [profileKey] is a user id (the detail pane) or [ProfileKey.CREATE] (the
+ * add-user screen); the caller owns navigation: [onClose] leaves the profile (with a message for the feed),
+ * [onCreated] leaves the add-user screen with how the new user was saved.
  */
 @Composable
 fun ProfileRoot(
@@ -64,7 +66,7 @@ fun ProfileRoot(
     profileKey: Long,
     showBackButton: Boolean,
     onClose: (UiText?) -> Unit,
-    onCreated: (UiText?) -> Unit,
+    onCreated: (WriteStatus) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -76,7 +78,7 @@ fun ProfileRoot(
     ObserveAsEvents(viewModel.events) { event ->
         when (event) {
             is ProfileEvent.Close -> onClose(event.message)
-            is ProfileEvent.Created -> onCreated(event.message)
+            is ProfileEvent.Created -> onCreated(event.status)
             is ProfileEvent.ShowMessage -> scope.launch { snackbarHostState.showSnackbar(event.message.resolve()) }
         }
     }

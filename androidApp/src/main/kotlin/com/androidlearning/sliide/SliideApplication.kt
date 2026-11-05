@@ -17,6 +17,7 @@ class SliideApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+
         initKoin(applicationScope) {
             androidContext(this@SliideApplication)
             // Initialises WorkManager with Koin's WorkerFactory before initKoin schedules the background sync.

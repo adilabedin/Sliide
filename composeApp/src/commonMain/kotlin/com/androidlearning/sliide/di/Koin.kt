@@ -46,5 +46,6 @@ fun initKoin(
             config?.invoke(this)
             modules(appModules(applicationScope))
         }.koin
+
     koin.get<UserSyncScheduler>().schedulePeriodicSync()
 }

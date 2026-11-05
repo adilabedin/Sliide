@@ -11,12 +11,12 @@ Clean Architecture (domain / data / presentation) with MVI, Koin for DI and Room
 |---|---|---|
 | `:users:domain` | `User` and sync models, `UserRepository` and `UserApiClient` interfaces, `UserDetailsValidator` | `:core:domain` |
 | `:users:data` | `OfflineFirstUserRepository`, `KtorUserApiClient`, `PendingSyncMerger`, DTOs, entity↔domain mappers, Koin module | users domain, `:core:database`, `:core:data` |
-| `:users:presentation` | `UsersListDetailRoot` (adaptive list-detail), `UsersViewModel` / `ProfileViewModel` (MVI) and their screens, `DeleteUndoController`, relative-time and error-message mapping, strings, Koin module | users domain, `:core:designsystem` |
+| `:users:presentation` | `usersGraph` and its routes (`UsersRoute`, `CreateUserRoute`), `UsersListDetailRoot` (adaptive list-detail), `UsersViewModel` / `ProfileViewModel` (MVI) and their screens, `DeleteUndoController`, relative-time and error-message mapping, strings, Koin module | users domain, `:core:designsystem` |
 | `:core:domain` | `Result` / `EmptyResult` / `DataError` and their helpers | — |
 | `:core:data` | Ktor `HttpClientFactory`, the `HttpClient` `get` / `post` / `patch` / `delete` extensions, per-platform engine, BuildKonfig GoRest credentials, `ApplicationScope` qualifier | `:core:domain` |
 | `:core:database` | Room KMP `SliideDatabase`: `users` and `pending_sync` tables, their DAOs, `DatabaseTransactionRunner`, per-platform builder | — |
-| `:core:designsystem` | `SliideTheme` (palette, typography, shape/spacing/motion tokens), shared components (card, avatar, shimmer, segmented toggle, FAB, Undo snackbar, destructive button, banners), `DeviceConfiguration` | — |
-| `:composeApp` | Shared app shell `App()`, Koin assembly `initKoin(applicationScope)` / `initKoinIos()`, iOS framework `ComposeApp` | everything above |
+| `:core:designsystem` | `SliideTheme` (palette, typography, shape/spacing/motion tokens), shared components (card, avatar, shimmer, segmented toggle, FAB, Undo snackbar, destructive button, banners), `DeviceConfiguration`, `SliideAdaptiveListDetailLayout` | — |
+| `:composeApp` | Shared app shell `App()` with the app's one `NavHost` (`NavigationRoot`), Koin assembly `initKoin(applicationScope)` / `initKoinIos()`, iOS framework `ComposeApp` | everything above |
 | `:androidApp` | `SliideApplication` (owns the application `CoroutineScope`, starts Koin), `MainActivity` | `:composeApp` |
 | `iosApp` | SwiftUI shell; starts Koin with `initKoinIos()` in `iOSApp.init()` and hosts `MainViewController()` | `ComposeApp` framework |
 
@@ -296,29 +296,41 @@ and only a pull shows the pull-to-refresh spinner. The automatic refresh on laun
 shimmer, and cached cards appear with no spinner. A Retry from a full-screen state shows the shimmer. A pull while the
 launch refresh is still running shows the spinner until that refresh ends, without starting a second one.
 
-**One adaptive scaffold, no NavHost.** `UsersListDetailRoot` hosts Material 3 Adaptive's `ListDetailPaneScaffold`:
-- the feed is the list pane and the reusable profile is the detail pane;
-- on phones the profile opens full screen and back returns to the feed;
-- in landscape and on small tablets the feed becomes a two-column grid;
-- on wide screens the feed and the profile sit side by side, with the selected card highlighted. Until you pick a
-  user, the detail pane shows the **first user in the feed** (computed in `UsersViewModel` as
-  `defaultSelectedUserId`, and covered by unit tests). It follows the first card after a delete, Undo, create or
-  refresh. The default is rendered without navigating, so shrinking the window shows the plain list, and back still
-  leaves the app. Once you start editing it, it is promoted to a real selection, so the draft survives a resize.
+**A NavHost for screens, ViewModel state for panes.** `:composeApp` owns the app's one `NavHost` (`NavigationRoot`),
+and the users feature adds its graph with `usersGraph(navController)` (type-safe `@Serializable` routes, as in the
+`android-navigation` skill). The graph has two destinations:
+- **`UsersRoute`**: the feed *and* the open profile. They are one destination because on a wide window both are on
+  screen at once, and a `NavHost` shows one destination at a time.
+- **`CreateUserRoute`**: the "New user" form, full screen at every window size. Its `ProfileViewModel` belongs to the
+  destination, so every visit starts empty. On save it leaves the `WriteStatus` on the feed's back-stack entry
+  (`savedStateHandle`, by name), and the feed scrolls to the new user at the top and shows "saved offline" if the create
+  was queued.
+
+Inside `UsersRoute`, `UsersListDetailRoot` lays the feed and the profile out with `SliideAdaptiveListDetailLayout` from
+`:core:designsystem`. It is a hand-written layout driven by `DeviceConfiguration`, the five-bucket window classification
+from the `compose-adaptive-layouts` skill:
+- **phone held upright** (under 600dp): one pane. The profile slides in over the feed, and back slides it away again,
+  with the feed's scroll position kept;
+- **anything wider** (a phone on its side, tablets, desktop): the feed on the start side, 40% of the width clamped to
+  280–400dp, and the profile beside it, with the selected card highlighted. Until you pick a user, the detail pane shows
+  the **first user in the feed** (`defaultSelectedUserId`). It follows the first card after a delete, Undo, create or
+  refresh. The default isn't a choice, so shrinking the window shows the plain list, and back still leaves the app.
+  Once you start editing it, it becomes the chosen user, so the draft survives a resize.
+
+Which profile is open is plain ViewModel state: `UsersViewModel` keeps the chosen user id, saves it in its
+`SavedStateHandle` so it survives process death, and derives the default from the pane layout the root reports. That
+makes the whole selection rule unit-testable, with no navigator to fake. Back on a phone is a Compose `BackHandler` that
+closes the profile; the profile's own Edit-mode handler is deeper, so it wins while editing.
 
 The feed's app bar is **pinned**: a single-line `TopAppBar` with `pinnedScrollBehavior`. It never collapses or moves;
-it only tints while the lazily built list or grid scrolls beneath it.
+it only tints while the lazily built list scrolls beneath it.
 
-The navigator's content key is a plain `Long` (the user id, or a `CREATE` sentinel), so the open profile survives
-rotation, resizing and process death. Back is handled with Compose's `BackHandler`, because the "navigable" scaffold
-variant is Android-only.
-
-**One reusable profile.** A single `ProfileViewModel` is pointed at a new target with `OnOpen(key)` and serves three
-modes:
+**One reusable profile.** `ProfileViewModel` serves three modes. The detail pane has one instance, pointed at a new
+user with `OnOpen(key)`; the add-user destination gets a fresh one each visit:
 - **View:** the Edit icon sits at the top right.
 - **Edit:** the icon animates into a large, filled **Save** button, and a close icon discards the draft.
-- **Create:** the add-user FAB opens a blank form titled "New user", with a back arrow in every layout, because the
-  form slides in as a navigation step.
+- **Create:** the add-user FAB navigates to a blank, full-screen form titled "New user", with a back arrow in every
+  layout.
 
 It also handles:
 - **Validation:** `UserDetailsValidator` is shared domain logic and runs as you type.
@@ -342,7 +354,7 @@ be finalised and `refresh` would stay blocked. The snackbar is a normal `Snackba
 controller's state, with a countdown line that resumes after rotation.
 
 **Where composables live.** Root and Screen composables stay next to their ViewModel, State and Action types
-(`users/`, `profile/`, `listdetail/`). Every smaller composable of the feature lives in one package,
+(`users/`, `profile/`, `listdetail/`, `navigation/`). Every smaller composable of the feature lives in one package,
 `users/presentation/.../composables`: the card, the feed and its placeholders (one shared lazy layout), the delete
 dialog, the select-user placeholder, the shared app bar and back/close icon button, the profile top bar, Save button,
 header and form, and the snackbar host. Each one ships its own previews. Generic building blocks stay in
@@ -606,6 +618,24 @@ The visual checks were automated on emulators and the simulator. A screenshot lo
 lasting under a second, so Claude recorded each cold start (`adb shell screenrecord`, `xcrun simctl io recordVideo`)
 and sampled the frame colours. That confirmed the light and dark backgrounds, the centred mark, and a hand-off with no
 white frame on API 37, API 30 and iOS.
+
+### Example: NavHost and the hand-written list-detail
+
+This change started as a question: how does another take on the challenge mix a `NavHost` with two panes on screen at
+once? Claude read that project and explained the trick: the panes are a single destination, switched by ViewModel state.
+It recommended keeping Material's `ListDetailPaneScaffold`. The developer preferred the other structure, so Claude
+ported it: a `NavHost` in `:composeApp`, a full-screen add-user route, selection moved into `UsersViewModel` (saved
+for process death), a five-bucket `DeviceConfiguration` and a hand-written `SliideAdaptiveListDetailLayout`. Edit stays
+inline in the profile pane.
+
+Checking it on an emulator resized to phone sizes found two bugs that only exist once the feed can leave composition
+(while the add-user screen is open). After more than five seconds away the feed's `WhileSubscribed` state restarted
+from "loading", which wiped the open profile and lost the default selection. Then the "scroll to the new user" event
+fired before the new card arrived, so the list kept its place below it. Claude fixed both: the feed resumes from the
+last list it had, and the scroll became state applied with `requestScrollToItem` once the new user is the first card.
+The first regression test passed even without the fix, because the fake repository replays its list synchronously.
+Claude gave the fake Room's asynchronous first emission and confirmed the test then fails without the fix. Test users
+were created offline and deleted before they could sync, so live GoRest data was never touched.
 
 ---
 

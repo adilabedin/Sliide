@@ -20,8 +20,17 @@ class UserSyncWorker(
     private val backgroundUserSync: BackgroundUserSync,
 ) : CoroutineWorker(context, params) {
     override suspend fun doWork(): WorkerResult {
-        val userId = inputData.getLong(KEY_USER_ID, NO_USER).takeIf { it != NO_USER }
+        val userId =
+            inputData
+                .getLong(
+                    key = KEY_USER_ID,
+                    defaultValue = NO_USER,
+                ).takeIf {
+                    it != NO_USER
+                }
+
         backgroundUserSync.run(userId)
+
         return WorkerResult.success()
     }
 

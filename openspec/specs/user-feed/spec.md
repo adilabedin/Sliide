@@ -176,7 +176,7 @@ no connectivity, timeout, server error, rate limiting, unauthorised, and a gener
 
 ### Requirement: Feed app bar stays pinned
 The users screen SHALL show a fixed-height app bar titled "Users" at the top. It SHALL NOT collapse, resize or scroll
-away while the feed scrolls. Only the content beneath it SHALL scroll: the list or grid of cards, or the shimmer
+away while the feed scrolls. Only the content beneath it SHALL scroll: the list of cards, or the shimmer
 placeholders. That content SHALL be composed lazily, so only the visible cards (plus a small buffer) are built.
 
 #### Scenario: Scroll a long feed

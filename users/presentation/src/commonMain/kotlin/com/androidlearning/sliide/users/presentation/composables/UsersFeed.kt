@@ -6,10 +6,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyGridState
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -35,24 +31,20 @@ private val FeedPadding =
     PaddingValues(start = SliideSpacing.l, end = SliideSpacing.l, top = SliideSpacing.s, bottom = 96.dp)
 
 /**
- * The feed as a single column ([columns] = 1, a `LazyColumn`) or a two-column `LazyVerticalGrid`. Rows are keyed by
- * user id and animate in, out and between positions. Only visible cards are composed.
+ * The feed as a single `LazyColumn`. Rows are keyed by user id and animate in, out and between positions. Only visible
+ * cards are composed.
  */
 @Composable
 internal fun UsersFeed(
     users: List<UserUi>,
-    columns: Int,
     selectedUserId: Long?,
     listState: LazyListState,
-    gridState: LazyGridState,
     onUserClick: (Long) -> Unit,
     onDeleteRequest: (Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     FeedLazyLayout(
-        columns = columns,
         listState = listState,
-        gridState = gridState,
         itemCount = users.size,
         key = { users[it].id },
         modifier = modifier,
@@ -74,14 +66,11 @@ internal fun UsersFeed(
  */
 @Composable
 internal fun UsersFeedPlaceholders(
-    columns: Int,
     loadingDescription: String,
     modifier: Modifier = Modifier,
 ) {
     FeedLazyLayout(
-        columns = columns,
         listState = rememberLazyListState(),
-        gridState = rememberLazyGridState(),
         itemCount = PLACEHOLDER_COUNT,
         key = null,
         modifier = modifier.semantics { contentDescription = loadingDescription },
@@ -91,43 +80,25 @@ internal fun UsersFeedPlaceholders(
 }
 
 /**
- * The one lazy container behind the feed and its placeholders: a `LazyColumn` for one column, a `LazyVerticalGrid`
- * otherwise, with the shared padding and spacing. [item] receives the index and, when items are [key]ed, an
+ * The one lazy container behind the feed and its placeholders: a `LazyColumn` with the shared padding and spacing. [item] receives the index and, when items are [key]ed, an
  * `animateItem()` modifier so keyed rows animate in, out and between positions.
  */
 @Composable
 private fun FeedLazyLayout(
-    columns: Int,
     listState: LazyListState,
-    gridState: LazyGridState,
     itemCount: Int,
     key: ((Int) -> Any)?,
     modifier: Modifier = Modifier,
     item: @Composable (index: Int, itemModifier: Modifier) -> Unit,
 ) {
-    if (columns == 1) {
-        LazyColumn(
-            state = listState,
-            modifier = modifier.fillMaxSize(),
-            contentPadding = FeedPadding,
-            verticalArrangement = Arrangement.spacedBy(SliideSpacing.m),
-        ) {
-            items(count = itemCount, key = key) { index ->
-                item(index, if (key != null) Modifier.animateItem() else Modifier)
-            }
-        }
-    } else {
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(columns),
-            state = gridState,
-            modifier = modifier.fillMaxSize(),
-            contentPadding = FeedPadding,
-            verticalArrangement = Arrangement.spacedBy(SliideSpacing.m),
-            horizontalArrangement = Arrangement.spacedBy(SliideSpacing.m),
-        ) {
-            items(count = itemCount, key = key) { index ->
-                item(index, if (key != null) Modifier.animateItem() else Modifier)
-            }
+    LazyColumn(
+        state = listState,
+        modifier = modifier.fillMaxSize(),
+        contentPadding = FeedPadding,
+        verticalArrangement = Arrangement.spacedBy(SliideSpacing.m),
+    ) {
+        items(count = itemCount, key = key) { index ->
+            item(index, if (key != null) Modifier.animateItem() else Modifier)
         }
     }
 }
@@ -137,20 +108,17 @@ private fun FeedLazyLayout(
 @Composable
 private fun FeedSample(
     darkTheme: Boolean,
-    columns: Int,
     loading: Boolean,
 ) {
     SliideTheme(darkTheme = darkTheme) {
         Surface(color = MaterialTheme.colorScheme.background) {
             if (loading) {
-                UsersFeedPlaceholders(columns = columns, loadingDescription = "Loading users")
+                UsersFeedPlaceholders(loadingDescription = "Loading users")
             } else {
                 UsersFeed(
                     users = previewUsers,
-                    columns = columns,
                     selectedUserId = previewUsers[1].id,
                     listState = rememberLazyListState(),
-                    gridState = rememberLazyGridState(),
                     onUserClick = {},
                     onDeleteRequest = {},
                 )
@@ -162,37 +130,19 @@ private fun FeedSample(
 @Preview(widthDp = 320, heightDp = 640)
 @Composable
 private fun UsersFeedOneColumnLightPreview() {
-    FeedSample(darkTheme = false, columns = 1, loading = false)
+    FeedSample(darkTheme = false, loading = false)
 }
 
 @Preview(widthDp = 320, heightDp = 640)
 @Composable
 private fun UsersFeedOneColumnDarkPreview() {
-    FeedSample(darkTheme = true, columns = 1, loading = false)
-}
-
-@Preview(widthDp = 700, heightDp = 400)
-@Composable
-private fun UsersFeedTwoColumnsLightPreview() {
-    FeedSample(darkTheme = false, columns = 2, loading = false)
-}
-
-@Preview(widthDp = 700, heightDp = 400)
-@Composable
-private fun UsersFeedTwoColumnsDarkPreview() {
-    FeedSample(darkTheme = true, columns = 2, loading = false)
+    FeedSample(darkTheme = true, loading = false)
 }
 
 @Preview(widthDp = 320, heightDp = 640)
 @Composable
 private fun UsersFeedPlaceholdersLightPreview() {
-    FeedSample(darkTheme = false, columns = 1, loading = true)
-}
-
-@Preview(widthDp = 700, heightDp = 400)
-@Composable
-private fun UsersFeedPlaceholdersTwoColumnsDarkPreview() {
-    FeedSample(darkTheme = true, columns = 2, loading = true)
+    FeedSample(darkTheme = false, loading = true)
 }
 
 // endregion

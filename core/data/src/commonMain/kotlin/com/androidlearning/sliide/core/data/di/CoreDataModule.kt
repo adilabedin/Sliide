@@ -26,5 +26,10 @@ expect val platformHttpEngineModule: Module
 val coreDataModule =
     module {
         single<Json> { goRestJson() }
-        single<HttpClient> { HttpClientFactory.create(engine = get<HttpClientEngine>(), json = get<Json>()) }
+        single<HttpClient> {
+            HttpClientFactory.create(
+                engine = get<HttpClientEngine>(),
+                json = get<Json>(),
+            )
+        }
     }

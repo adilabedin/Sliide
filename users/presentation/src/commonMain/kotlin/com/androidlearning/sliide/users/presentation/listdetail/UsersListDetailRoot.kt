@@ -1,152 +1,128 @@
 package com.androidlearning.sliide.users.presentation.listdetail
 
-import androidx.compose.foundation.background
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
-import androidx.compose.material3.adaptive.layout.AnimatedPane
-import androidx.compose.material3.adaptive.layout.ListDetailPaneScaffold
-import androidx.compose.material3.adaptive.layout.ListDetailPaneScaffoldRole
-import androidx.compose.material3.adaptive.layout.PaneAdaptedValue
-import androidx.compose.material3.adaptive.navigation.BackNavigationBehavior
-import androidx.compose.material3.adaptive.navigation.ThreePaneScaffoldNavigator
-import androidx.compose.material3.adaptive.navigation.rememberListDetailPaneScaffoldNavigator
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.backhandler.BackHandler
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.androidlearning.sliide.core.designsystem.layout.SliideAdaptiveListDetailLayout
+import com.androidlearning.sliide.core.designsystem.layout.currentDeviceConfiguration
+import com.androidlearning.sliide.core.designsystem.layout.showsListDetailOnePaneAtATime
+import com.androidlearning.sliide.users.domain.model.WriteStatus
 import com.androidlearning.sliide.users.presentation.composables.SelectUserPlaceholder
 import com.androidlearning.sliide.users.presentation.profile.ProfileAction
-import com.androidlearning.sliide.users.presentation.profile.ProfileKey
 import com.androidlearning.sliide.users.presentation.profile.ProfileMode
 import com.androidlearning.sliide.users.presentation.profile.ProfileRoot
 import com.androidlearning.sliide.users.presentation.profile.ProfileViewModel
 import com.androidlearning.sliide.users.presentation.users.UsersAction
 import com.androidlearning.sliide.users.presentation.users.UsersRoot
 import com.androidlearning.sliide.users.presentation.users.UsersViewModel
-import kotlinx.coroutines.CoroutineScope
+import com.androidlearning.sliide.users.presentation.util.toQueuedMessage
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.launch
 import org.koin.compose.viewmodel.koinViewModel
 
 /**
- * The users feature's entry point (design D1): the feed as the list pane and the reusable profile as the detail pane
- * of Material 3's adaptive list-detail scaffold. Compact and medium widths show one pane (the profile full screen, back
- * returns to the feed); expanded widths show both side by side. The navigator's content key is a user id or
- * [ProfileKey.CREATE], a primitive so the selection survives rotation, resizing and process death.
+ * The users feed and the open profile, as one navigation destination (spec: adaptive-layout). A phone held upright
+ * shows one at a time; wider windows show both side by side (see [SliideAdaptiveListDetailLayout]). Which profile is
+ * open lives in [UsersViewModel], not in navigation, so turning the device keeps it, and so does process death.
  *
  * On two-pane layouts with no chosen profile, the detail pane shows the feed's first user (the ViewModel's
- * `defaultSelectedUserId`) without navigating, so the default never opens full screen when the window shrinks and back
- * is not intercepted for it. Entering Edit mode on the default promotes it to a real destination so the draft survives
- * a resize (spec: adaptive-layout).
+ * `defaultSelectedUserId`) without choosing it, so the default never opens full screen when the window shrinks and back
+ * is not intercepted for it. Entering Edit mode on the default chooses it, so the draft survives a resize.
  *
- * Back is handled here because the "navigable" scaffold variant is Android-only; the profile's own Edit-mode back
- * handler is composed deeper, so it takes precedence while editing.
+ * Adding a user is a separate destination; [onAddUserClick] goes there, and [createdStatus] is how its last save
+ * went, announced here once and then cleared through [onCreatedStatusShown].
  */
-@OptIn(ExperimentalMaterial3AdaptiveApi::class, ExperimentalComposeUiApi::class)
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
-fun UsersListDetailRoot(modifier: Modifier = Modifier) {
-    val navigator = rememberListDetailPaneScaffoldNavigator<Long>()
-    val scope = rememberCoroutineScope()
+fun UsersListDetailRoot(
+    onAddUserClick: () -> Unit,
+    createdStatus: WriteStatus?,
+    onCreatedStatusShown: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val usersViewModel: UsersViewModel = koinViewModel()
     val profileViewModel: ProfileViewModel = koinViewModel()
     val usersState by usersViewModel.state.collectAsStateWithLifecycle()
     // The profile's mode together with the user it is showing: promotion must only react to an edit of the default user
-    // itself, not to a stale Edit mode left over from another profile while the navigator is mid-switch.
+    // itself, not to a stale Edit mode left over from another profile while the pane is mid-switch.
     val profileFocus by remember { profileViewModel.state.map { it.mode to it.header?.userId } }
         .collectAsStateWithLifecycle(initialValue = ProfileMode.VIEW to null)
 
-    val selectedKey = navigator.currentDestination?.contentKey
-    val isTwoPane =
-        navigator.scaffoldValue[ListDetailPaneScaffoldRole.List] == PaneAdaptedValue.Expanded &&
-            navigator.scaffoldValue[ListDetailPaneScaffoldRole.Detail] == PaneAdaptedValue.Expanded
-    val detailKey = selectedKey ?: usersState.defaultSelectedUserId.takeIf { isTwoPane }
-    val isDefaultSelection = selectedKey == null && detailKey != null
+    val configuration = currentDeviceConfiguration()
+    val isOnePaneAtATime = configuration.showsListDetailOnePaneAtATime
+    val openedUserId = usersState.selectedUserId
+    val isDefaultSelection = usersState.defaultSelectedUserId != null
+
     // ProfileRoot collects its events with the callbacks captured at first composition; read the latest value.
     val showingDefault by rememberUpdatedState(isDefaultSelection)
 
-    LaunchedEffect(selectedKey) { usersViewModel.onAction(UsersAction.OnSelectionChange(selectedKey)) }
-    LaunchedEffect(isTwoPane) { usersViewModel.onAction(UsersAction.OnPaneLayoutChange(isTwoPane)) }
-    LaunchedEffect(detailKey) {
-        // However the pane was emptied (back, close icon, after save/delete), the next open starts clean.
-        if (detailKey == null) profileViewModel.onAction(ProfileAction.OnDismiss)
-    }
-    LaunchedEffect(isDefaultSelection, detailKey, profileFocus) {
-        // Promote the default to a real destination once it is edited, so the draft survives a shrink to one pane.
+    fun closeProfile() = usersViewModel.onAction(UsersAction.OnSelectionChange(null))
+
+    // Read when the profile pane leaves composition, to tell a close from leaving for another destination.
+    val latestOpenedUserId by rememberUpdatedState(openedUserId)
+
+    LaunchedEffect(isOnePaneAtATime) { usersViewModel.onAction(UsersAction.OnPaneLayoutChange(isTwoPane = !isOnePaneAtATime)) }
+
+    LaunchedEffect(isDefaultSelection, openedUserId, profileFocus) {
+        // Choose the default once it is edited, so the draft survives a shrink to one pane.
         val (mode, shownUserId) = profileFocus
-        if (isDefaultSelection && detailKey != null && mode == ProfileMode.EDIT && shownUserId == detailKey) {
-            navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, detailKey)
+        if (isDefaultSelection && mode == ProfileMode.EDIT && shownUserId == openedUserId) {
+            usersViewModel.onAction(UsersAction.OnSelectionChange(openedUserId))
         }
     }
 
+    LaunchedEffect(createdStatus) {
+        if (createdStatus == null) return@LaunchedEffect
+        usersViewModel.onAction(UsersAction.OnUserCreated)
+        createdStatus.toQueuedMessage()?.let { usersViewModel.onAction(UsersAction.OnShowMessage(it)) }
+        onCreatedStatusShown()
+    }
+
+    // On a phone held upright the profile covers the feed, so back returns to it. The profile's own Edit-mode back
+    // handler is composed deeper, so it takes precedence while editing.
     @Suppress("DEPRECATION")
-    BackHandler(enabled = navigator.canNavigateBack(BackNavigationBehavior.PopUntilContentChange)) {
-        scope.launch { navigator.navigateBack(BackNavigationBehavior.PopUntilContentChange) }
-    }
+    BackHandler(enabled = isOnePaneAtATime && openedUserId != null) { closeProfile() }
 
-    fun closeProfile() {
-        scope.launch { navigator.navigateBack(BackNavigationBehavior.PopUntilContentChange) }
-    }
-
-    // The scaffold leaves a gap between panes; paint it with the theme instead of the bare window background.
-    ListDetailPaneScaffold(
-        directive = navigator.scaffoldDirective,
-        value = navigator.scaffoldValue,
-        modifier = modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh),
-        listPane = {
-            AnimatedPane {
-                UsersRoot(
-                    viewModel = usersViewModel,
-                    onUserClick = { id -> scope.openDetail(navigator, id) },
-                    onAddUserClick = { scope.openDetail(navigator, ProfileKey.CREATE) },
-                )
-            }
+    SliideAdaptiveListDetailLayout(
+        selectedItem = openedUserId,
+        configuration = configuration,
+        modifier = modifier,
+        list = {
+            UsersRoot(
+                viewModel = usersViewModel,
+                onUserClick = { id -> usersViewModel.onAction(UsersAction.OnSelectionChange(id)) },
+                onAddUserClick = onAddUserClick,
+            )
         },
-        detailPane = {
-            AnimatedPane {
-                if (detailKey == null) {
-                    SelectUserPlaceholder()
-                } else {
-                    ProfileRoot(
-                        viewModel = profileViewModel,
-                        profileKey = detailKey,
-                        showBackButton = !isTwoPane,
-                        onClose = { message ->
-                            // A default selection whose user vanished just re-targets to the new first user, silently
-                            // (spec: user-profile, "Default selection disappears"); there is nothing to navigate back.
-                            if (!showingDefault) {
-                                closeProfile()
-                                message?.let { usersViewModel.onAction(UsersAction.OnShowMessage(it)) }
-                            }
-                        },
-                        onCreated = { message ->
-                            closeProfile()
-                            usersViewModel.onAction(UsersAction.OnUserCreated)
-                            message?.let { usersViewModel.onAction(UsersAction.OnShowMessage(it)) }
-                        },
-                    )
-                }
+        detail = { userId ->
+            // However the profile was closed (back, its back arrow, after a delete), the next open starts clean. It is
+            // reset once the pane has left the screen, so it doesn't empty itself while sliding out; leaving for the
+            // add-user screen disposes it too, with the profile still open, and keeps it.
+            DisposableEffect(Unit) {
+                onDispose { if (latestOpenedUserId == null) profileViewModel.onAction(ProfileAction.OnDismiss) }
             }
+            ProfileRoot(
+                viewModel = profileViewModel,
+                profileKey = userId,
+                showBackButton = isOnePaneAtATime,
+                onClose = { message ->
+                    // A default selection whose user vanished just re-targets to the new first user, silently
+                    // (spec: user-profile, "Default selection disappears"); there is nothing to close.
+                    if (!showingDefault) {
+                        closeProfile()
+                        message?.let { usersViewModel.onAction(UsersAction.OnShowMessage(it)) }
+                    }
+                },
+                // The detail pane only shows existing users; creating one is the add-user destination.
+                onCreated = {},
+            )
         },
+        emptyDetail = { SelectUserPlaceholder() },
     )
-}
-
-/** Shows [key] in the detail pane, replacing (not stacking on) a profile that is already open. */
-@OptIn(ExperimentalMaterial3AdaptiveApi::class)
-private fun CoroutineScope.openDetail(
-    navigator: ThreePaneScaffoldNavigator<Long>,
-    key: Long,
-) {
-    launch {
-        if (navigator.currentDestination?.contentKey == key) return@launch
-        if (navigator.currentDestination?.contentKey != null) {
-            navigator.navigateBack(BackNavigationBehavior.PopUntilContentChange)
-        }
-        navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, key)
-    }
 }
