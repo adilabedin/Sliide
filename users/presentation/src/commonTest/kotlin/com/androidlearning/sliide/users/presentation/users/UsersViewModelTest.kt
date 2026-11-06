@@ -14,7 +14,6 @@ import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
 import assertk.assertions.isNull
 import assertk.assertions.isTrue
-import com.androidlearning.sliide.core.domain.util.ApplicationScope
 import com.androidlearning.sliide.core.domain.util.DataError
 import com.androidlearning.sliide.core.domain.util.Result
 import com.androidlearning.sliide.users.domain.model.WriteStatus
@@ -31,7 +30,6 @@ import com.androidlearning.sliide.users.presentation.generated.resources.error_n
 import com.androidlearning.sliide.users.presentation.util.RelativeTime
 import com.androidlearning.sliide.users.presentation.util.UiText
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
@@ -62,14 +60,9 @@ class UsersViewModelTest {
         Dispatchers.resetMain()
     }
 
-    /** Unconfined like Main, so deletes sent in it run at once; tied to the test so nothing outlives it. */
-    private fun TestScope.applicationScope() =
-        ApplicationScope(CoroutineScope(backgroundScope.coroutineContext + UnconfinedTestDispatcher(testScheduler)))
-
     private fun TestScope.viewModel(savedStateHandle: SavedStateHandle = SavedStateHandle()): UsersViewModel =
         UsersViewModel(
             userRepository = repository,
-            applicationScope = applicationScope(),
             clock = SchedulerClock(testScheduler),
             savedStateHandle = savedStateHandle,
         )

@@ -191,7 +191,10 @@ fun UsersScreen(
                                     modifier =
                                         Modifier
                                             .fillMaxWidth()
-                                            .padding(horizontal = SliideSpacing.l, vertical = SliideSpacing.xs),
+                                            .padding(
+                                                horizontal = SliideSpacing.l,
+                                                vertical = SliideSpacing.xs,
+                                            ),
                                 )
                             }
                         }
@@ -229,7 +232,8 @@ private fun UndoSnackbarEffect(
     onAction: (UsersAction) -> Unit,
 ) {
     val undoLabel = stringResource(Res.string.delete_snackbar_undo)
-    val message = pendingDelete?.let { stringResource(Res.string.delete_snackbar_message, it.userName) }
+    val message =
+        pendingDelete?.let { stringResource(Res.string.delete_snackbar_message, it.userName) }
     LaunchedEffect(pendingDelete?.userId) {
         if (pendingDelete == null || message == null) return@LaunchedEffect
         snackbarHostState.currentSnackbarData?.dismiss()
@@ -283,7 +287,8 @@ private val errorState =
                 UiText.Resource(Res.string.error_no_internet),
             ),
     )
-private val populatedState = UsersState(users = previewUsers.filterNot { it.isPendingSync }, content = FeedContent.Users)
+private val populatedState =
+    UsersState(users = previewUsers.filterNot { it.isPendingSync }, content = FeedContent.Users)
 private val pendingSyncState = UsersState(users = previewUsers, content = FeedContent.Users)
 private val bannerState =
     populatedState.copy(

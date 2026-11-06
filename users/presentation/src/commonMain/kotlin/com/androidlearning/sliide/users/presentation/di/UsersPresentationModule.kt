@@ -11,7 +11,6 @@ val usersPresentationModule =
         viewModel {
             UsersViewModel(
                 userRepository = get(),
-                applicationScope = get(),
                 clock = get(),
                 savedStateHandle = get(),
             )

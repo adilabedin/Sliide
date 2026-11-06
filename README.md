@@ -12,8 +12,8 @@ Clean Architecture (domain / data / presentation) with MVI, Koin for DI and Room
 | `:users:domain` | `User` and sync models, `UserRepository` and `UserApiClient` interfaces, `UserDetailsValidator` | `:core:domain` |
 | `:users:data` | `OfflineFirstUserRepository`, `KtorUserApiClient`, `PendingSyncMerger`, DTOs, entity↔domain mappers, Koin module | users domain, `:core:database`, `:core:data` |
 | `:users:presentation` | `usersGraph` and its routes (`UsersRoute`, `CreateUserRoute`), `UsersListDetailRoot` (adaptive list-detail), `UsersViewModel` / `ProfileViewModel` (MVI) and their screens, relative-time and error-message mapping, strings, Koin module | users domain, `:core:designsystem` |
-| `:core:domain` | `Result` / `EmptyResult` / `DataError` and their helpers, the `ApplicationScope` type | — |
-| `:core:data` | Ktor `HttpClientFactory`, the `HttpClient` `get` / `post` / `patch` / `delete` extensions, per-platform engine, BuildKonfig GoRest credentials | `:core:domain` |
+| `:core:domain` | `Result` / `EmptyResult` / `DataError` and their helpers | — |
+| `:core:data` | Ktor `HttpClientFactory`, the `HttpClient` `get` / `post` / `patch` / `delete` extensions, per-platform engine, BuildKonfig GoRest credentials, the `ApplicationScope` type | `:core:domain` |
 | `:core:database` | Room KMP `SliideDatabase`: `users` and `pending_sync` tables, their DAOs, `DatabaseTransactionRunner`, per-platform builder | — |
 | `:core:designsystem` | `SliideTheme` (palette, typography, shape/spacing/motion tokens), shared components (card, avatar, shimmer, segmented toggle, FAB, Undo snackbar, destructive button, banners), `DeviceConfiguration`, `SliideAdaptiveListDetailLayout` | — |
 | `:composeApp` | Shared app shell `App()` with the app's one `NavHost` (`NavigationRoot`), Koin assembly `initKoin(applicationScope)` / `initKoinIos()`, iOS framework `ComposeApp` | everything above |
@@ -262,8 +262,8 @@ a per-user sync, a periodic run and a pull-to-refresh never send the same entry 
 ### Application scope: operations outlive the screen
 
 Each platform's application creates one process-wide `CoroutineScope(SupervisorJob() + Dispatchers.Default)` and
-hands it to Koin, which binds it as an `ApplicationScope` (a small type in `:core:domain`, so presentation can inject
-it too without depending on data):
+hands it to Koin, which binds it as an `ApplicationScope` (a small type in `:core:data`; only the data layer launches
+work in it, so presentation never sees it):
 - on Android, `SliideApplication` owns it as a property;
 - on iOS, `initKoinIos()` creates it, because there is no `Application` object and Swift can't build a Kotlin scope.
 
@@ -345,8 +345,11 @@ It also handles:
 `UsersViewModel`'s `hiddenIds` and starts a 5-second timer in `viewModelScope`. The cache is left untouched:
 - Undo cancels the timer and un-hides the user, so the card animates back;
 - when the timer ends, the snackbar is swiped away, a newer delete is confirmed, or the ViewModel is cleared
-  (`onCleared`), `deleteUser` runs in the `ApplicationScope`. The user stays hidden until the cache drops it, so the
-  card never flashes back.
+  (`onCleared`), the ViewModel calls `deleteUser` from `viewModelScope`. The repository runs the write in the
+  `ApplicationScope` and the ViewModel only awaits it, so it completes even if the feed is gone. From `onCleared`,
+  where `viewModelScope` is already cancelled, the call is launched `CoroutineStart.UNDISPATCHED` so the hand-off
+  happens before the first suspension. The user stays hidden until the cache drops it, so the card never flashes
+  back. If the feed is gone, a failure message has nowhere to show and is dropped.
 
 The profile doesn't delete anything itself. It emits `ProfileEvent.DeleteConfirmed`, and `UsersListDetailRoot` hands
 it to the feed. Deleting the open profile's user clears the selection, so the detail pane moves on at once.

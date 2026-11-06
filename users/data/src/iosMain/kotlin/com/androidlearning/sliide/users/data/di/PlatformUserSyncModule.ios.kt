@@ -1,6 +1,6 @@
 package com.androidlearning.sliide.users.data.di
 
-import com.androidlearning.sliide.core.domain.util.ApplicationScope
+import com.androidlearning.sliide.core.data.coroutines.ApplicationScope
 import com.androidlearning.sliide.users.data.sync.BackgroundTaskUserSyncScheduler
 import com.androidlearning.sliide.users.data.sync.ConnectivityCheck
 import com.androidlearning.sliide.users.data.sync.NwPathConnectivityCheck

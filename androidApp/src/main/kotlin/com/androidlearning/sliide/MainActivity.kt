@@ -12,6 +12,7 @@ class MainActivity : ComponentActivity() {
         // Room-backed state means the first frame already shows the cached feed or the shimmer.
         installSplashScreen()
         enableEdgeToEdge()
+
         super.onCreate(savedInstanceState)
 
         setContent {

@@ -1,10 +1,10 @@
 package com.androidlearning.sliide.di
 
+import com.androidlearning.sliide.core.data.coroutines.ApplicationScope
 import com.androidlearning.sliide.core.data.di.coreDataModule
 import com.androidlearning.sliide.core.data.di.platformHttpEngineModule
 import com.androidlearning.sliide.core.database.di.databaseModule
 import com.androidlearning.sliide.core.database.di.platformDatabaseModule
-import com.androidlearning.sliide.core.domain.util.ApplicationScope
 import com.androidlearning.sliide.users.data.di.platformUserSyncModule
 import com.androidlearning.sliide.users.data.di.usersDataModule
 import com.androidlearning.sliide.users.domain.UserSyncScheduler
@@ -17,7 +17,7 @@ import org.koin.dsl.module
 
 /**
  * Every module of the app. [applicationScope] is created and owned by the application (`SliideApplication` on Android,
- * [initKoinIos] on iOS) and bound as [ApplicationScope], so repository work and confirmed deletes outlive any screen.
+ * [initKoinIos] on iOS) and bound as [ApplicationScope], so repository work outlives any screen.
  */
 fun appModules(applicationScope: CoroutineScope): List<Module> =
     listOf(

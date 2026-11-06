@@ -13,6 +13,11 @@ import kotlinx.coroutines.flow.Flow
  * the network call. Failures that may later succeed (no connectivity, timeout, 5xx, 429, 401/403) are queued for a
  * later [syncPending]. A rejected write loses its pending entry and returns the typed [DataError]; only a rejected
  * create is also removed locally, and the next [refresh] corrects anything else.
+ *
+ * Lifetime: every suspending operation hands its work to an app-wide scope before its first suspension, and the caller
+ * only awaits it. Once called, an operation runs to completion even if the caller is cancelled straight away (e.g. a
+ * ViewModel cleared mid-request, or one calling from `onCleared` with an undispatched launch); cancelling only stops
+ * the wait.
  */
 interface UserRepository {
     /** Users from the local cache, newest first. Emits again whenever the cache changes. */

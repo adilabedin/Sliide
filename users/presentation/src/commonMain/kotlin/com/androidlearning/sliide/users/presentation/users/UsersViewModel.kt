@@ -3,7 +3,6 @@ package com.androidlearning.sliide.users.presentation.users
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.androidlearning.sliide.core.domain.util.ApplicationScope
 import com.androidlearning.sliide.core.domain.util.DataError
 import com.androidlearning.sliide.core.domain.util.Result
 import com.androidlearning.sliide.users.domain.UserRepository
@@ -14,6 +13,7 @@ import com.androidlearning.sliide.users.presentation.generated.resources.delete_
 import com.androidlearning.sliide.users.presentation.generated.resources.delete_refused
 import com.androidlearning.sliide.users.presentation.util.UiText
 import com.androidlearning.sliide.users.presentation.util.toUiText
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -44,15 +44,15 @@ import kotlin.time.Instant
  *
  * It owns the Undo window of every delete, from the feed or handed over by the profile (spec: user-deletion): a
  * confirmed user is only hidden, and [UserRepository.deleteUser] runs once [undoWindow] passes without Undo. The cache
- * is not touched until then, so a refresh during the window can't clash with it. The delete runs in [applicationScope],
- * and [onCleared] sends one still waiting, so it goes through even if the feed is closed.
+ * is not touched until then, so a refresh during the window can't clash with it. [onCleared] sends a delete still
+ * waiting, and the repository finishes a started write even if this ViewModel is gone, so it goes through even if the
+ * feed is closed.
  *
  * It also owns which profile is open (spec: adaptive-layout): the user the person chose, kept in [savedStateHandle] so
  * it survives process death, or, beside the list on two-pane layouts, the first user by default.
  */
 class UsersViewModel(
     private val userRepository: UserRepository,
-    private val applicationScope: ApplicationScope,
     private val clock: Clock,
     private val savedStateHandle: SavedStateHandle,
     private val tick: Duration = 1.minutes,
@@ -69,7 +69,8 @@ class UsersViewModel(
     private val hiddenIds = MutableStateFlow<Set<Long>>(emptySet())
 
     private val refresh = MutableStateFlow(RefreshState())
-    private val local = MutableStateFlow(LocalState(chosenUserId = savedStateHandle[KEY_CHOSEN_USER]))
+    private val local =
+        MutableStateFlow(LocalState(chosenUserId = savedStateHandle[KEY_CHOSEN_USER]))
 
     private val _events = Channel<UsersEvent>(Channel.BUFFERED)
     val events: Flow<UsersEvent> = _events.receiveAsFlow()
@@ -181,13 +182,21 @@ class UsersViewModel(
      */
     private fun confirmDelete(userId: Long) {
         val user = lastCachedUsers?.firstOrNull { it.id == userId } ?: return
+
         finishDelete()
+
         hiddenIds.update { it + userId }
+
         if (local.value.chosenUserId == userId) {
             savedStateHandle[KEY_CHOSEN_USER] = null
             local.update { it.copy(chosenUserId = null) }
         }
-        pendingDelete.value = PendingDelete(user = user, deadline = clock.now() + undoWindow)
+        pendingDelete.value =
+            PendingDelete(
+                user = user,
+                deadline = clock.now() + undoWindow,
+            )
+
         undoTimer =
             viewModelScope.launch {
                 delay(undoWindow)
@@ -203,14 +212,20 @@ class UsersViewModel(
     }
 
     /**
-     * Sends the delete still waiting on its Undo, if any. It runs in [applicationScope] because the user confirmed it,
-     * so it must go through even if the feed closes first. The user stays hidden until the cache has dropped it.
+     * Sends the delete still waiting on its Undo, if any. The user confirmed it, so it must go through even if the feed
+     * closes first: [UserRepository.deleteUser] hands the write off before its first suspension and finishes it even if
+     * this ViewModel is cleared. [CoroutineStart.UNDISPATCHED] makes that hand-off happen from [onCleared] too, where
+     * [viewModelScope] is already cancelled and a plain launch would never start. The user stays hidden until the cache
+     * has dropped it; once the feed is gone, the result (and any failure message) has nowhere to go.
      */
     private fun finishDelete() {
         val user = pendingDelete.value?.user ?: return
+
         undoTimer?.cancel()
+
         pendingDelete.value = null
-        applicationScope.launch {
+
+        viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
             val result = userRepository.deleteUser(user)
             hiddenIds.update { it - user.id }
             result.toDeleteMessage(user)?.let { _events.trySend(UsersEvent.ShowMessage(it)) }
@@ -220,7 +235,8 @@ class UsersViewModel(
     private fun Result<WriteStatus, DataError>.toDeleteMessage(user: User): UiText? =
         when (this) {
             is Result.Failure -> {
-                val text = if (error is DataError.Validation) Res.string.delete_refused else Res.string.delete_failed
+                val text =
+                    if (error is DataError.Validation) Res.string.delete_refused else Res.string.delete_failed
                 UiText.Resource(text, listOf(user.name))
             }
 

@@ -24,6 +24,7 @@ fun NavGraphBuilder.usersGraph(navController: NavController) {
             val createdStatus by savedStateHandle
                 .getStateFlow<String?>(KEY_CREATED_STATUS, null)
                 .collectAsStateWithLifecycle()
+
             UsersListDetailRoot(
                 onAddUserClick = {
                     navController.navigate(CreateUserRoute) {
