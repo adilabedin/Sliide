@@ -115,7 +115,7 @@ class OfflineFirstUserRepositoryIntegrationTest {
 
             val result = repository().createUser(jane)
 
-            assertThat(result).isEqualTo(Result.Success(WriteStatus.QUEUED_AUTH_FAILED))
+            assertThat(result).isEqualTo(Result.Success(WriteStatus.QUEUED))
             assertThat(
                 database.pendingSyncDao
                     .getAllOrdered()

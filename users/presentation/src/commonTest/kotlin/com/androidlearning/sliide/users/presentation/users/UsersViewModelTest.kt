@@ -28,7 +28,6 @@ import com.androidlearning.sliide.users.presentation.generated.resources.Res
 import com.androidlearning.sliide.users.presentation.generated.resources.delete_failed
 import com.androidlearning.sliide.users.presentation.generated.resources.delete_refused
 import com.androidlearning.sliide.users.presentation.generated.resources.error_no_internet
-import com.androidlearning.sliide.users.presentation.generated.resources.write_queued_auth_failed
 import com.androidlearning.sliide.users.presentation.util.RelativeTime
 import com.androidlearning.sliide.users.presentation.util.UiText
 import kotlinx.coroutines.CompletableDeferred
@@ -587,25 +586,6 @@ class UsersViewModelTest {
 
                     assertThat(awaitItem()).isEqualTo(
                         UsersEvent.ShowMessage(UiText.Resource(Res.string.delete_failed, listOf("Jane Doe"))),
-                    )
-                }
-                cancelAndIgnoreRemainingEvents()
-            }
-        }
-
-    @Test
-    fun unauthorisedDeleteSaysItWillRetry() =
-        runTest {
-            repository.deleteResult = Result.Success(WriteStatus.QUEUED_AUTH_FAILED)
-            val viewModel = viewModel()
-            viewModel.state.test {
-                repository.emit(listOf(jane))
-                viewModel.events.test {
-                    viewModel.confirmDelete(jane.id)
-                    advanceTimeBy(6.seconds)
-
-                    assertThat(awaitItem()).isEqualTo(
-                        UsersEvent.ShowMessage(UiText.Resource(Res.string.write_queued_auth_failed)),
                     )
                 }
                 cancelAndIgnoreRemainingEvents()

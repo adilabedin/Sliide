@@ -29,7 +29,6 @@ import com.androidlearning.sliide.users.presentation.generated.resources.profile
 import com.androidlearning.sliide.users.presentation.generated.resources.validation_email_invalid
 import com.androidlearning.sliide.users.presentation.generated.resources.validation_name_required
 import com.androidlearning.sliide.users.presentation.generated.resources.validation_name_too_short
-import com.androidlearning.sliide.users.presentation.generated.resources.write_queued_auth_failed
 import com.androidlearning.sliide.users.presentation.util.RelativeTime
 import com.androidlearning.sliide.users.presentation.util.UiText
 import kotlinx.coroutines.CompletableDeferred
@@ -223,21 +222,6 @@ class ProfileViewModelTest {
         }
 
     @Test
-    fun unauthorisedEditSaveReturnsToViewAndSaysItWillRetry() =
-        runTest {
-            repository.updateResult = Result.Success(WriteStatus.QUEUED_AUTH_FAILED)
-            val viewModel = editingJane()
-            viewModel.events.test {
-                viewModel.onAction(ProfileAction.OnNameChange("Jane Smith"))
-                viewModel.onAction(ProfileAction.OnSaveClick)
-
-                assertThat(awaitItem()).isEqualTo(ProfileEvent.ShowMessage(text(Res.string.write_queued_auth_failed)))
-                assertThat(viewModel.state.value.mode).isEqualTo(ProfileMode.VIEW)
-                assertThat(viewModel.state.value.form.name).isEqualTo("Jane Smith")
-            }
-        }
-
-    @Test
     fun takenEmailKeepsInputAndShowsTheServerMessage() =
         runTest {
             repository.updateResult =
@@ -388,21 +372,6 @@ class ProfileViewModelTest {
                 viewModel.onAction(ProfileAction.OnSaveClick)
 
                 assertThat(awaitItem()).isEqualTo(ProfileEvent.Created(WriteStatus.QUEUED))
-            }
-        }
-
-    @Test
-    fun unauthorisedCreateReportsItWasQueuedForRetry() =
-        runTest {
-            repository.createResult = Result.Success(WriteStatus.QUEUED_AUTH_FAILED)
-            val viewModel = viewModel()
-            viewModel.onAction(ProfileAction.OnOpen(ProfileKey.CREATE))
-            viewModel.events.test {
-                viewModel.onAction(ProfileAction.OnNameChange("Ada Lovelace"))
-                viewModel.onAction(ProfileAction.OnEmailChange("ada@example.com"))
-                viewModel.onAction(ProfileAction.OnSaveClick)
-
-                assertThat(awaitItem()).isEqualTo(ProfileEvent.Created(WriteStatus.QUEUED_AUTH_FAILED))
             }
         }
 

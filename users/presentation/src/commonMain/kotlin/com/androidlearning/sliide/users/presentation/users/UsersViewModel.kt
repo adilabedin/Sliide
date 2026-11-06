@@ -12,7 +12,6 @@ import com.androidlearning.sliide.users.domain.model.WriteStatus
 import com.androidlearning.sliide.users.presentation.generated.resources.Res
 import com.androidlearning.sliide.users.presentation.generated.resources.delete_failed
 import com.androidlearning.sliide.users.presentation.generated.resources.delete_refused
-import com.androidlearning.sliide.users.presentation.generated.resources.write_queued_auth_failed
 import com.androidlearning.sliide.users.presentation.util.UiText
 import com.androidlearning.sliide.users.presentation.util.toUiText
 import kotlinx.coroutines.Job
@@ -225,12 +224,8 @@ class UsersViewModel(
                 UiText.Resource(text, listOf(user.name))
             }
 
-            is Result.Success ->
-                when (data) {
-                    // A delete queued because the device is offline needs no message (spec: user-deletion).
-                    WriteStatus.SYNCED, WriteStatus.QUEUED -> null
-                    WriteStatus.QUEUED_AUTH_FAILED -> UiText.Resource(Res.string.write_queued_auth_failed)
-                }
+            // Sent or queued: a delete needs no message (spec: user-deletion).
+            is Result.Success -> null
         }
 
     /** The Undo snackbar goes with the feed, so a delete still waiting on it is final now. */

@@ -5,7 +5,7 @@ import assertk.assertions.containsExactly
 import assertk.assertions.containsExactlyInAnyOrder
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
-import assertk.assertions.isNull
+import assertk.assertions.isFalse
 import assertk.assertions.isTrue
 import assertk.assertions.single
 import com.androidlearning.sliide.core.database.PendingOperation
@@ -37,9 +37,7 @@ class BackgroundUserSyncTest {
         runTest {
             val h = RepositoryHarness(backgroundScope)
 
-            val outcome = BackgroundUserSync(h.repository).run()
-
-            assertThat(outcome).isEqualTo(BackgroundSyncOutcome.Synced)
+            BackgroundUserSync(h.repository).run()
             assertThat(h.apiClient.requests).isEmpty()
         }
 
@@ -49,9 +47,7 @@ class BackgroundUserSyncTest {
             val h = RepositoryHarness(backgroundScope)
             h.seedPending(h.seedUser(userEntity(1)), PendingOperation.UPDATE)
 
-            val outcome = BackgroundUserSync(h.repository).run()
-
-            assertThat(outcome).isEqualTo(BackgroundSyncOutcome.Synced)
+            BackgroundUserSync(h.repository).run()
             assertThat(h.apiClient.requests)
                 .containsExactly(RemoteRequest.Update(1, details(name = "User 1", email = "user1@example.com")))
             assertThat(h.pendingSyncDao.entries).isEmpty()
@@ -64,9 +60,7 @@ class BackgroundUserSyncTest {
             h.seedPending(h.seedUser(userEntity(1)), PendingOperation.UPDATE)
             h.apiClient.updateResults += Result.Failure(DataError.Remote.SERVER_ERROR)
 
-            val outcome = BackgroundUserSync(h.repository).run()
-
-            assertThat(outcome).isEqualTo(BackgroundSyncOutcome.Stopped(DataError.Remote.SERVER_ERROR))
+            BackgroundUserSync(h.repository).run()
             assertThat(h.pendingSyncDao.entries).single().transform { it.user.id }.isEqualTo(1L)
         }
 
@@ -79,9 +73,7 @@ class BackgroundUserSyncTest {
             h.seedPending(h.seedUser(userEntity(2)), PendingOperation.UPDATE, queuedAt = 200)
             h.apiClient.createResults += Result.Failure(emailTaken)
 
-            val outcome = BackgroundUserSync(h.repository).run()
-
-            assertThat(outcome).isEqualTo(BackgroundSyncOutcome.Synced)
+            BackgroundUserSync(h.repository).run()
             assertThat(h.pendingSyncDao.entries).isEmpty()
             // The cache is left to the next foreground refresh; a background run never replaces it.
             assertThat(h.userDao.users.map { it.id }).containsExactlyInAnyOrder(-1L, 2L)
@@ -114,7 +106,7 @@ class BackgroundUserSyncTest {
             advanceUntilIdle()
             gate.complete(Unit)
 
-            assertThat(background.await()).isEqualTo(BackgroundSyncOutcome.Synced)
+            background.await()
             refresh.await()
             assertThat(h.apiClient.requests.filterIsInstance<RemoteRequest.Update>()).single()
         }
@@ -126,9 +118,7 @@ class BackgroundUserSyncTest {
             h.seedPending(h.seedUser(userEntity(41)), PendingOperation.UPDATE, queuedAt = 100)
             h.seedPending(h.seedUser(userEntity(42)), PendingOperation.UPDATE, queuedAt = 200)
 
-            val outcome = BackgroundUserSync(h.repository).run(userId = 42)
-
-            assertThat(outcome).isEqualTo(BackgroundSyncOutcome.Synced)
+            BackgroundUserSync(h.repository).run(userId = 42)
             assertThat(
                 h.apiClient.requests
                     .filterIsInstance<RemoteRequest.Update>()
@@ -144,27 +134,23 @@ class BackgroundUserSyncTest {
             h.seedPending(h.seedUser(userEntity(42)), PendingOperation.UPDATE)
             h.apiClient.updateResults += Result.Failure(DataError.Remote.SERVER_ERROR)
 
-            val outcome = BackgroundUserSync(h.repository).run(userId = 42)
-
-            assertThat(outcome).isEqualTo(BackgroundSyncOutcome.Stopped(DataError.Remote.SERVER_ERROR))
+            BackgroundUserSync(h.repository).run(userId = 42)
             assertThat(h.pendingSyncDao.entries.map { it.user.id }).containsExactly(42L)
         }
 
     @Test
-    fun perUserRunUnexpectedExceptionBecomesStoppedUnknown() =
+    fun perUserRunSwallowsAnUnexpectedException() =
         runTest {
             // A plain Exception, not an IllegalStateException: any non-cancellation failure must be caught.
-            val outcome = BackgroundUserSync(ThrowingSyncRepository(Exception("boom"))).run(userId = 42)
-
-            assertThat(outcome).isEqualTo(BackgroundSyncOutcome.Stopped(DataError.Remote.UNKNOWN))
+            // Returning at all is the assertion: a throw would fail the test.
+            BackgroundUserSync(ThrowingSyncRepository(Exception("boom"))).run(userId = 42)
         }
 
     @Test
-    fun unexpectedExceptionBecomesStoppedUnknown() =
+    fun runSwallowsAnUnexpectedException() =
         runTest {
-            val outcome = BackgroundUserSync(ThrowingSyncRepository(IllegalStateException("boom"))).run()
-
-            assertThat(outcome).isEqualTo(BackgroundSyncOutcome.Stopped(DataError.Remote.UNKNOWN))
+            // Returning at all is the assertion: a throw would fail the test.
+            BackgroundUserSync(ThrowingSyncRepository(IllegalStateException("boom"))).run()
         }
 
     @Test
@@ -173,15 +159,19 @@ class BackgroundUserSyncTest {
             val h = RepositoryHarness(backgroundScope)
             h.seedPending(h.seedUser(userEntity(1)), PendingOperation.UPDATE)
             h.apiClient.gate = CompletableDeferred()
-            var outcome: BackgroundSyncOutcome? = null
+            var finished = false
 
-            val job = launch { outcome = BackgroundUserSync(h.repository).run() }
+            val job =
+                launch {
+                    BackgroundUserSync(h.repository).run()
+                    finished = true
+                }
             advanceUntilIdle()
             job.cancel()
             job.join()
 
             assertThat(job.isCancelled).isTrue()
-            assertThat(outcome).isNull()
+            assertThat(finished).isFalse()
             assertThat(h.pendingSyncDao.entries).single().transform { it.user.id }.isEqualTo(1L)
         }
 

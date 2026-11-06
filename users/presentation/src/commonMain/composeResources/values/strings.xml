@@ -62,7 +62,6 @@
     <string name="profile_status_inactive">Inactive</string>
     <string name="profile_added">Added</string>
     <string name="profile_saved_offline">Saved offline, will sync when online</string>
-    <string name="write_queued_auth_failed">Couldn\'t authenticate, will retry</string>
     <string name="profile_no_longer_available">This user is no longer available</string>
     <string name="profile_select_title">Select a user</string>
     <string name="profile_select_body">Choose someone from the list to see their profile.</string>
