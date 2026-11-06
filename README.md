@@ -551,7 +551,7 @@ untinted gap between the panes and a selection tint that matched one of the avat
 ### Example: UI polish
 
 The polish pass ([`openspec/changes/archive/2026-11-02-polish-users-ui`](./openspec/changes/archive/2026-11-02-polish-users-ui)) started as a list of UI
-complaints: a moving app bar, an empty tablet detail pane, a close icon on a screen that slides in, a small Save
+issues found in review: a moving app bar, an empty tablet detail pane, a close icon on a screen that slides in, a small Save
 button, a two-button delete dialog, and composables scattered across packages. Before planning, Claude asked two
 questions whose answers changed the scope: should design-system components move too (no, feature only), and how big
 the Save button should be (a bigger filled button in the app bar). While planning, it found a spec conflict. The
@@ -571,10 +571,10 @@ It also found that `ObserveAsEvents` keeps the callbacks from the first composit
 
 ### Example: background sync
 
-The background sync ([`openspec/changes/archive/2026-11-02-add-background-sync`](./openspec/changes/archive/2026-11-02-add-background-sync)) started as a
-request to "implement the online create, update and delete, queue them on error, and add WorkManager and the iOS
-background task". Before planning, Claude read the code and reported that the online writes, their queueing and their
-UI wiring already existed, so the change covers only the background job. It asked one question, whether *every* error
+The background sync ([`openspec/changes/archive/2026-11-02-add-background-sync`](./openspec/changes/archive/2026-11-02-add-background-sync)) was scoped to
+the background job: WorkManager on Android and a background task on iOS, replaying writes the repository had already
+queued. Before planning, Claude confirmed that the online writes, their queueing and their UI wiring were in place, so
+nothing else needed to change. It asked one question, whether *every* error
 should be queued, because a 422 or 401 would fail on every replay. The answer, "no retry, and don't bother when
 offline", became two design decisions: queue retryable failures only, and run the job only when there is a network,
 without ever retrying.
@@ -588,9 +588,10 @@ arrives before its period. The end-to-end check therefore waits for the real 30-
 
 ### Example: per-user background sync
 
-The per-user sync ([`openspec/changes/sync-per-operation`](./openspec/changes/sync-per-operation)) came from asking
-where a failed write gets retried: the answer was "a periodic job scheduled at launch", which was hard to find from the
-repository and left an offline write waiting up to 30 minutes after the network came back. Claude drafted the
+The per-user sync ([`openspec/changes/sync-per-operation`](./openspec/changes/sync-per-operation)) addressed two
+weaknesses of relying only on the periodic job scheduled at launch: the retry path wasn't visible from the repository,
+and an offline write could wait up to 30 minutes after the network came back. The goal was to request a sync for that
+user as soon as its write is queued. Claude drafted the
 proposal, delta specs, design and tasks with OpenSpec, then implemented them task by task.
 
 Two corrections came from implementation rather than planning. First, the draft also stopped a full replay on
@@ -634,12 +635,12 @@ white frame on API 37, API 30 and iOS.
 
 ### Example: NavHost and the hand-written list-detail
 
-This change started as a question: how does another take on the challenge mix a `NavHost` with two panes on screen at
-once? Claude read that project and explained the trick: the panes are a single destination, switched by ViewModel state.
-It recommended keeping Material's `ListDetailPaneScaffold`. The developer preferred the other structure, so Claude
-ported it: a `NavHost` in `:composeApp`, a full-screen add-user route, selection moved into `UsersViewModel` (saved
-for process death), a five-bucket `DeviceConfiguration` and a hand-written `SliideAdaptiveListDetailLayout`. Edit stays
-inline in the profile pane.
+The goal was one `NavHost` for the whole app while keeping two panes on screen on wide windows. The design makes the
+panes a single destination, switched by ViewModel state. Claude recommended keeping Material's
+`ListDetailPaneScaffold`; the developer preferred the hand-written structure, so Claude built it: a `NavHost` in
+`:composeApp`, a full-screen add-user route, selection moved into `UsersViewModel` (saved for process death), a
+five-bucket `DeviceConfiguration` and a hand-written `SliideAdaptiveListDetailLayout`. Edit stays inline in the profile
+pane.
 
 Checking it on an emulator resized to phone sizes found two bugs that only exist once the feed can leave composition
 (while the add-user screen is open). After more than five seconds away the feed's `WhileSubscribed` state restarted
