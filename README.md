@@ -163,12 +163,12 @@ The repository then applies the decision with what each path knows:
 
 | Decision | Direct write (user is on screen) | Queued write during replay |
 |---|---|---|
-| KEEP | Entry queued; returns `QUEUED`, or `QUEUED_AUTH_FAILED` for 401/403 | Entry kept for the next sync; the other entries are still sent |
-| REJECT | Entry deleted; a create also removes its temp user (the form stays open for a corrected resubmit). Returns the `DataError` | Entry deleted only; counted as rejected |
-| GONE | Delete: success. Update: user removed locally, returns `NOT_FOUND` | Entry deleted only; a delete counts as synced, an update as rejected |
+| KEEP | Entry queued; returns `QUEUED` (401/403 included) | Entry kept for the next sync; the other entries are still sent |
+| REJECT | Entry deleted; a create also removes its temp user (the form stays open for a corrected resubmit). Returns the `DataError` | Entry deleted only; the sync carries on |
+| GONE | Delete: success. Update: user removed locally, returns `NOT_FOUND` | Entry deleted only |
 
 **401 and 403 are kept, not dropped.** A bad or expired build token would otherwise silently throw away every offline
-edit. Instead the write stays queued and the UI says "Couldn't authenticate, will retry" rather than "Saved offline".
+edit. Instead the write stays queued like any offline write ("Saved offline").
 A build with a valid token drains the queue. Reads are unaffected: a refresh still reports the unauthorised error.
 
 Neither path rolls the cached users back (except a rejected direct create, whose temp user goes at once). When a write
@@ -225,7 +225,7 @@ Two triggers, both visible in code (per-user sync: [`openspec/changes/sync-per-o
 2. **Periodic safety net.** `initKoin()` calls `schedulePeriodicSync()` once per launch. It replays whatever is left,
    e.g. a write whose process died before its request went out.
 
-Both replay paths share one `replayEntry(userId)` in the repository: it takes the write lock and re-reads the entry, so
+Both replay paths share one `retrySync(userId)` in the repository: it takes the write lock and re-reads the entry, so
 a per-user sync, a periodic run and a pull-to-refresh never send the same entry twice.
 
 | | Android | iOS |
@@ -422,8 +422,8 @@ GOREST_API_TOKEN=<your token>
 ```
 
 On CI, set the `GOREST_API_TOKEN` environment variable instead. Without a token, the project still builds and every
-test passes, and the feed still loads. But creates, edits and deletes get `401`: they stay queued and the app says
-"Couldn't authenticate, will retry", so set it before you try to write anything.
+test passes, and the feed still loads. But creates, edits and deletes get `401`: they stay queued as if offline and never
+sync, so set it before you try to write anything.
 
 - Android: `./gradlew :androidApp:installDebug`, or the run widget in the IDE.
 - iOS: open [`iosApp`](./iosApp) in Xcode and run. The build phase calls `:composeApp:embedAndSignAppleFrameworkForXcode`.

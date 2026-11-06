@@ -139,12 +139,12 @@ class OfflineFirstUserRepositoryWriteTest {
         }
 
     @Test
-    fun createUnauthorisedIsQueuedAsAuthFailed() =
+    fun createUnauthorisedIsQueued() =
         runTest {
             val h = RepositoryHarness(backgroundScope)
             h.apiClient.createResults += Result.Failure(DataError.Remote.UNAUTHORIZED)
 
-            assertThat(h.repository.createUser(details())).isEqualTo(Result.Success(WriteStatus.QUEUED_AUTH_FAILED))
+            assertThat(h.repository.createUser(details())).isEqualTo(Result.Success(WriteStatus.QUEUED))
             assertThat(h.userDao.getById(-1)?.name).isEqualTo("Jane Doe")
             assertThat(
                 h.pendingSyncDao.entries
@@ -245,7 +245,7 @@ class OfflineFirstUserRepositoryWriteTest {
         }
 
     @Test
-    fun updateUnauthorisedKeepsEditAndIsQueuedAsAuthFailed() =
+    fun updateUnauthorisedKeepsEditAndIsQueued() =
         runTest {
             val h = RepositoryHarness(backgroundScope)
             val original = h.seedUser(userEntity(42, name = "Old"))
@@ -253,7 +253,7 @@ class OfflineFirstUserRepositoryWriteTest {
 
             val result = h.repository.updateUser(original.toUser().copy(name = "New"))
 
-            assertThat(result).isEqualTo(Result.Success(WriteStatus.QUEUED_AUTH_FAILED))
+            assertThat(result).isEqualTo(Result.Success(WriteStatus.QUEUED))
             assertThat(h.userDao.getById(42)?.name).isEqualTo("New")
             assertThat(
                 h.pendingSyncDao.entries
@@ -450,13 +450,13 @@ class OfflineFirstUserRepositoryWriteTest {
         }
 
     @Test
-    fun deleteUnauthorisedKeepsUserRemovedAndIsQueuedAsAuthFailed() =
+    fun deleteUnauthorisedKeepsUserRemovedAndIsQueued() =
         runTest {
             val h = RepositoryHarness(backgroundScope)
             val user = h.seedUser(userEntity(42)).toUser()
             h.apiClient.deleteResults += Result.Failure(DataError.Remote.UNAUTHORIZED)
 
-            assertThat(h.repository.deleteUser(user)).isEqualTo(Result.Success(WriteStatus.QUEUED_AUTH_FAILED))
+            assertThat(h.repository.deleteUser(user)).isEqualTo(Result.Success(WriteStatus.QUEUED))
             assertThat(h.userDao.getById(42)).isNull()
             assertThat(
                 h.pendingSyncDao.entries

@@ -25,7 +25,11 @@ fun NavGraphBuilder.usersGraph(navController: NavController) {
                 .getStateFlow<String?>(KEY_CREATED_STATUS, null)
                 .collectAsStateWithLifecycle()
             UsersListDetailRoot(
-                onAddUserClick = { navController.navigate(CreateUserRoute) { launchSingleTop = true } },
+                onAddUserClick = {
+                    navController.navigate(CreateUserRoute) {
+                        launchSingleTop = true
+                    }
+                },
                 createdStatus = createdStatus?.let(WriteStatus::valueOf),
                 onCreatedStatusShown = { savedStateHandle[KEY_CREATED_STATUS] = null },
             )
@@ -34,7 +38,10 @@ fun NavGraphBuilder.usersGraph(navController: NavController) {
             CreateUserRoot(
                 onNavigateBack = { navController.navigateUp() },
                 onCreated = { status ->
-                    navController.previousBackStackEntry?.savedStateHandle?.set(KEY_CREATED_STATUS, status.name)
+                    navController.previousBackStackEntry?.savedStateHandle?.set(
+                        KEY_CREATED_STATUS,
+                        status.name,
+                    )
                     navController.navigateUp()
                 },
             )

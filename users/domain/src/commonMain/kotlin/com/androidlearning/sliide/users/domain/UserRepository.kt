@@ -20,16 +20,16 @@ interface UserRepository {
 
     /**
      * Inserts the user locally under a temporary negative id, then creates it on the server.
-     * [WriteStatus.SYNCED]: re-keyed to the server id. [WriteStatus.QUEUED] / [WriteStatus.QUEUED_AUTH_FAILED]: kept
-     * under the temp id and queued. Failure (e.g. [DataError.Validation]): the local insert is rolled back.
+     * [WriteStatus.SYNCED]: re-keyed to the server id. [WriteStatus.QUEUED]: kept under the temp id and queued.
+     * Failure (e.g. [DataError.Validation]): the local insert is rolled back.
      */
     suspend fun createUser(details: UserDetails): Result<WriteStatus, DataError>
 
     /**
      * Writes the change locally, then updates it on the server. A user with a temporary id is never sent; the
      * change is merged into its pending create and returns [WriteStatus.QUEUED].
-     * A failure that may later succeed queues the change ([WriteStatus.QUEUED], or [WriteStatus.QUEUED_AUTH_FAILED]
-     * for 401/403). Failure: the pending entry is dropped and the edit stays in the cache until the next [refresh],
+     * A failure that may later succeed queues the change ([WriteStatus.QUEUED], including
+     * 401/403). Failure: the pending entry is dropped and the edit stays in the cache until the next [refresh],
      * except for [DataError.Remote.NOT_FOUND], where the user no longer exists on the server and is removed from the
      * cache. An uncached user fails with [DataError.Local.NOT_FOUND].
      */
@@ -37,7 +37,7 @@ interface UserRepository {
 
     /**
      * Deletes the user: removes it from the cache, then sends DELETE for a server-known user (404 counts as success) or
-     * queues it on a failure that may later succeed (including 401/403, as [WriteStatus.QUEUED_AUTH_FAILED]). A
+     * queues it on a failure that may later succeed (including 401/403, as [WriteStatus.QUEUED]). A
      * temp-id user just has its row and pending create removed, with no network call; a temp id whose create already
      * synced in this process is deleted under its server id. [user] is a snapshot, so a user a refresh already removed
      * from the cache still gets its DELETE sent.
@@ -62,8 +62,8 @@ interface UserRepository {
     suspend fun syncPending(userId: Long): EmptyResult<DataError.Remote>
 
     /**
-     * Runs [syncPending]; only if the queue is then empty, fetches the last page of `/users` and replaces the cache
-     * when it differs. On a replay failure the cache is left untouched and the failure is returned.
+     * Runs [syncPending], again while entries queued in the meantime remain, then fetches the last page of `/users` and
+     * replaces the cache when it differs. On a replay failure the cache is left untouched and the failure is returned.
      */
     suspend fun refresh(): EmptyResult<DataError>
 }

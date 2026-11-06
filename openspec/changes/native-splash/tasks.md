@@ -15,7 +15,7 @@
 ## 3. Android launcher icon
 
 - [x] 3.1 Move the adaptive icons to `mipmap-anydpi/ic_launcher.xml` and `ic_launcher_round.xml`, with background `@color/icon_background`, foreground `@drawable/ic_logo_mark` and monochrome `@drawable/ic_logo_mark`. Delete the density PNG mipmaps, `drawable-v24/ic_launcher_foreground.xml` and `drawable/ic_launcher_background.xml` (design D4). Verify `./gradlew :androidApp:assembleDebug` succeeds and `grep -r ic_launcher_background androidApp/src` finds nothing
-- [ ] 3.2 Manual check through android-cli on an API 34+ emulator: tap the launcher icon after a force-stop and capture the screen. Verify the splash shows the centred champagne "S" on midnight (light) and on ink (dark, after `adb shell cmd uimode night yes`), that the feed follows with no white frame, that the circle-masked launcher icon shows the whole "S", and that the themed icon shows the tinted "S"
+- [x] 3.2 Manual check through android-cli on an API 34+ emulator: tap the launcher icon after a force-stop and capture the screen. Verify the splash shows the centred champagne "S" on midnight (light) and on ink (dark, after `adb shell cmd uimode night yes`), that the feed follows with no white frame, that the circle-masked launcher icon shows the whole "S", and that the themed icon shows the tinted "S"
 - [x] 3.3 Repeat the splash part of 3.2 on an API 30 emulator and verify the compat splash matches (centred mark, brand background, no blank window)
 
 ## 4. iOS launch screen and app icon
@@ -33,7 +33,7 @@
 - [x] 6.1 Run `./gradlew ktlintCheck` and verify no violations
 - [x] 6.2 Run `./gradlew build` and `./gradlew :composeApp:linkDebugFrameworkIosSimulatorArm64` and verify both succeed
 - [x] 6.3 For the affected module `:androidApp`, run all unit tests and all instrumented tests (`./gradlew :androidApp:connectedAndroidTest` on an emulator started through android-cli). Verify all pass, including `AppLaunchSmokeTest`, `BackgroundSyncScheduledTest` and the new `SplashThemeTest`, with none skipped or weakened
-- [ ] 6.4 Commit on `feature/native-splash`, push (the pre-push hook runs `testAndroidHostTest`), and open a PR against `main` that lists the before/after splash and icon screenshots from 3.2–4.3
+- [x] 6.4 Commit on `feature/native-splash`, push (the pre-push hook runs `testAndroidHostTest`), and open a PR against `main` that lists the before/after splash and icon screenshots from 3.2–4.3
 
 ## Workflow follow-up
 
